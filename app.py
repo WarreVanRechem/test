@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v8.1", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v9.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- INITIALISEER SESSIE ---
@@ -26,17 +26,23 @@ def load_ai():
 
 ai_pipe = load_ai()
 
+# --- PRESET LIJSTEN (DE AUTOMATISCHE ZOEKER) ---
+PRESETS = {
+    "✍️ Eigen Invoer": "",
+    "🇺🇸 Big Tech & AI (Magnificent 7+)": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, AVGO, ORCL, PLTR",
+    "🇪🇺 AEX & Bel20 (Lokaal)": "ASML.AS, ADYEN.AS, BES.AS, SHELL.AS, HEIA.AS, UNA.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR",
+    "🚀 High Volatility & Crypto Stocks": "COIN, MSTR, SMCI, MARA, HOOD, SOFI, RIVN, NIO, DKNG, SQ",
+    "🛡️ Dividend & Value (Veilig)": "KO, JNJ, PEP, PG, MCD, O, V, MA, BRK-B, DIS, WMT"
+}
+
 # --- HULPFUNCTIES ---
 def get_current_price(ticker):
-    """Haalt de prijs op (Robuust)."""
     try:
         stock = yf.Ticker(ticker)
         price = stock.fast_info.last_price
         if price and not pd.isna(price) and price > 0: return price
         hist = stock.history(period="1d")
         if not hist.empty: return hist['Close'].iloc[-1]
-        hist_5d = stock.history(period="5d")
-        if not hist_5d.empty: return hist_5d['Close'].iloc[-1]
     except: pass
     return 0.0
 
@@ -72,22 +78,19 @@ def get_zenith_data(ticker):
         return None, None
 
 def get_external_info(ticker):
-    """Haalt Insiders EN Nieuws op (De zware functie)."""
     buys, news_results = 0, []
     try:
-        # 1. Insider Check
         stock = yf.Ticker(ticker)
         insider = stock.insider_transactions
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
-        # 2. AI Nieuws Check
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
         feed = feedparser.parse(response.content)
         
-        for entry in feed.entries[:5]: # Max 5 artikelen voor snelheid
+        for entry in feed.entries[:5]:
             sentiment = "NEUTRAL"
             if ai_pipe:
                 try:
@@ -241,80 +244,70 @@ elif page == "💼 Mijn Portfolio":
     else: st.write("Portfolio is leeg.")
 
 # ==========================================
-# PAGINA 3: DEEP SCANNER (FULL POWER)
+# PAGINA 3: DEEP SCANNER (MET PRESETS)
 # ==========================================
 elif page == "📡 Deep Scanner":
-    st.title("📡 Zenith Deep Market Scanner")
-    st.info("⚠️ **Let op:** Deze scanner analyseert ALLES: Data + Nieuws (AI) + Insiders. Dit kan 3-5 seconden per aandeel duren.")
+    st.title("📡 Zenith Market Scanner")
+    st.info("Kies een sector of index om automatisch te scannen op koopjes.")
 
-    default_tickers = "AAPL, NVDA, TSLA, AMD, MSFT, ASML.AS"
-    scan_input = st.text_area("Voer tickers in (gescheiden door komma's)", default_tickers)
+    # 1. KEUZEMENU VOOR LIJSTEN
+    selected_preset = st.selectbox("📂 Kies een markt om te scannen:", list(PRESETS.keys()))
+    
+    # 2. INPUT VELD (Wordt automatisch gevuld)
+    default_text = PRESETS[selected_preset]
+    scan_input = st.text_area("Te scannen tickers:", default_text, height=100)
 
     if st.button("🚀 Start Deep Scan"):
         tickers_to_scan = [t.strip().upper() for t in scan_input.split(",") if t.strip()]
         
         results = []
-        progress_text = "Analyseren..."
-        my_bar = st.progress(0, text=progress_text)
+        my_bar = st.progress(0, text="Starten...")
         
         for i, ticker in enumerate(tickers_to_scan):
-            # Update de balk met tekst zodat je weet waar hij is
-            my_bar.progress((i) / len(tickers_to_scan), text=f"🔍 Analyseren van {ticker} (Tech + AI + Insiders)...")
+            my_bar.progress((i) / len(tickers_to_scan), text=f"🔍 Analyseren van {ticker}...")
             
-            # 1. Technische Data
             df, metrics = get_zenith_data(ticker)
             
-            # 2. Insiders & Nieuws (De "Zware" taak)
             if df is not None:
-                buys, news = get_external_info(ticker) # Dit duurt even!
+                buys, news = get_external_info(ticker)
                 
-                # 3. Bereken de VOLLEDIGE Zenith Score
+                # SCORE BEREKENING
                 score = 0
-                
-                # A. Markt
                 if metrics['market_bull']: score += 20
-                
-                # B. Trend
                 if metrics['price'] > metrics['sma200']: score += 30
                 
-                # C. RSI
-                if metrics['rsi'] < 30: score += 20
-                elif metrics['rsi'] > 70: pass # Geen punten aftrek in de scanner voor netheid, maar geen bonus
-                else: score += 0
+                # RSI Logic (Koopje?)
+                rsi_status = "Neutraal"
+                if metrics['rsi'] < 30: 
+                    score += 20
+                    rsi_status = "🟢 OVERSOLD (Koopje?)"
+                elif metrics['rsi'] > 70: 
+                    rsi_status = "🔴 OVERBOUGHT (Duur)"
                 
-                # D. Insiders (Nu actief in de scanner!)
                 if buys > 0: score += 20
-                
-                # E. AI Sentiment (Nu actief in de scanner!)
                 pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
                 if pos_news >= 2: score += 10
                 
-                # Sla op
                 results.append({
                     "Ticker": ticker,
                     "Prijs": metrics['price'],
-                    "RSI": round(metrics['rsi'], 1),
+                    "RSI Status": rsi_status,
                     "Insiders": f"{buys} Buys" if buys > 0 else "-",
                     "AI Sentiment": f"{pos_news} Positief",
-                    "Totale Score": score
+                    "Zenith Score": score
                 })
         
-        # Klaar!
-        my_bar.progress(1.0, text="Scan Voltooid!")
+        my_bar.progress(1.0, text="Klaar!")
         
         if results:
-            scan_df = pd.DataFrame(results).sort_values(by="Totale Score", ascending=False)
-            st.success(f"✅ Deep Scan voltooid! {len(results)} aandelen volledig doorgelicht.")
+            scan_df = pd.DataFrame(results).sort_values(by="Zenith Score", ascending=False)
+            st.success(f"✅ Scan voltooid! {len(results)} aandelen geanalyseerd.")
             
-            # Mooie tabel
             st.dataframe(
                 scan_df,
                 column_config={
-                    "Totale Score": st.column_config.ProgressColumn(
-                        "Zenith Score",
-                        format="%d",
-                        min_value=0,
-                        max_value=100,
+                    "Zenith Score": st.column_config.ProgressColumn(
+                        "Score", format="%d", min_value=0, max_value=100,
                     ),
                     "Prijs": st.column_config.NumberColumn(format=f"{curr_symbol}%.2f"),
                 },
