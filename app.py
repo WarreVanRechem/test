@@ -10,20 +10,25 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v16.0", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v16.1", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE INITIALISATIE ---
 if 'portfolio' not in st.session_state:
     st.session_state['portfolio'] = []
 
-# Zorg dat de navigatie variabele bestaat voor het switchen van pagina's
 if 'nav_page' not in st.session_state:
     st.session_state['nav_page'] = "🔎 Markt Analyse"
 
-# Zorg dat de geselecteerde ticker variabele bestaat
 if 'selected_ticker' not in st.session_state:
     st.session_state['selected_ticker'] = "RDW"
+
+# --- CALLBACK FUNCTIE (DE FIX VOOR DE CRASH) ---
+def start_analysis_for(ticker):
+    """Zet de sessie variabelen goed VOORDAT de app herlaadt."""
+    st.session_state['selected_ticker'] = ticker
+    st.session_state['nav_page'] = "🔎 Markt Analyse"
+    st.session_state['auto_run'] = True
 
 @st.cache_resource
 def load_ai():
@@ -175,7 +180,7 @@ def get_external_info(ticker):
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.header("Navigatie")
 
-# SLIMME NAVIGATIE: We koppelen de radio button aan de session_state 'nav_page'
+# De Navigatie widget
 page = st.sidebar.radio(
     "Ga naar:", 
     ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"],
@@ -206,16 +211,15 @@ if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
     
     col_input, col_cap = st.columns(2)
-    # HIER IS DE MAGIE: We vullen de 'value' met de session_state ticker
     with col_input: 
         ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
     with col_cap: capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
-    # We voegen 'OR st.session_state.get('auto_run')' toe om automatisch te starten als je van de scanner komt
+    # Auto-run logica (checkt of we vanaf de scanner komen)
     auto_run = st.session_state.get('auto_run', False)
     
     if st.button("Start Deep Analysis") or auto_run:
-        # Zet auto_run direct weer uit om loops te voorkomen
+        # Zet auto_run direct weer uit
         if auto_run: st.session_state['auto_run'] = False
         
         df, metrics, fund, wall_street = get_zenith_data(ticker_input)
@@ -344,7 +348,7 @@ elif page == "💼 Mijn Portfolio":
     else: st.write("Leeg.")
 
 # ==========================================
-# PAGINA 3: SCANNER (MET AUTO-LINK)
+# PAGINA 3: SCANNER
 # ==========================================
 elif page == "📡 Deep Scanner":
     st.title("📡 Zenith Market Scanner")
@@ -394,15 +398,13 @@ elif page == "📡 Deep Scanner":
         my_bar.progress(1.0, text="Klaar!")
         
         if results:
-            st.session_state['scan_results'] = results # Bewaar resultaten
+            st.session_state['scan_results'] = results 
         else:
             st.error("Geen data.")
 
-    # --- TOON RESULTATEN & ACTIE KNOP ---
     if 'scan_results' in st.session_state and st.session_state['scan_results']:
         results = st.session_state['scan_results']
         
-        # 1. Tabel
         st.dataframe(
             pd.DataFrame(results).sort_values(by="Score", ascending=False), 
             use_container_width=True, 
@@ -414,20 +416,14 @@ elif page == "📡 Deep Scanner":
         )
 
         st.markdown("---")
-        # 2. Actie Sectie
         st.subheader("🔍 Wil je een aandeel dieper analyseren?")
         c1, c2 = st.columns([3, 1])
         
-        # Keuzemenu gevuld met de tickers uit de resultaten
         options = [r['Ticker'] for r in results]
         selected_scan = c1.selectbox("Kies uit de lijst:", options)
         
-        if c2.button("🚀 Analyseer Nu"):
-            # Update Session State
-            st.session_state['selected_ticker'] = selected_scan # Ticker instellen
-            st.session_state['nav_page'] = "🔎 Markt Analyse" # Pagina switchen
-            st.session_state['auto_run'] = True # Vlaggetje zetten om analyse direct te starten
-            st.rerun() # Herstarten om de switch te forceren
+        # --- HIER ZIT DE FIX ---
+        c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(selected_scan,))
 
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
