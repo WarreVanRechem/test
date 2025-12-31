@@ -8,7 +8,7 @@ from transformers import pipeline
 import feedparser
 import warnings
 import requests
-import time # Nodig voor de anti-blokkade pauze
+import time
 
 # Try-except voor scipy
 try:
@@ -18,7 +18,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v24.1 Fix", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v25.0 Recovery", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -154,8 +154,18 @@ def get_macro_data():
     for name, t in tickers.items():
         try:
             obj = yf.Ticker(t)
-            p = obj.fast_info.last_price
-            prev = obj.fast_info.previous_close
+            # FIX: Probeer fast_info, anders fallback naar history
+            try:
+                p = obj.fast_info.last_price
+                prev = obj.fast_info.previous_close
+                if not p or not prev: raise ValueError("Geen fast data")
+            except:
+                hist = obj.history(period="2d")
+                if len(hist) >= 2:
+                    p = hist['Close'].iloc[-1]
+                    prev = hist['Close'].iloc[-2]
+                else: p = 0; prev = 0
+            
             if p and prev: data[name] = (p, ((p-prev)/prev)*100)
             else: data[name] = (0,0)
         except: data[name] = (0,0)
@@ -184,13 +194,13 @@ def get_zenith_data(ticker):
         ent = df['L'].iloc[-1] if not pd.isna(df['L'].iloc[-1]) else cur
         low = df['Low'].tail(50).min(); high = df['High'].tail(50).max()
         
-        # --- DE FIX ZIT HIER: JUISTE KEYS GEBRUIKEN ---
+        # SNIPER OBJECT (De ideale koopprijs)
         snip = {
-            "entry_price": ent, # Was 'entry'
-            "current_diff": ((cur-ent)/cur)*100, # Was 'diff'
-            "stop_loss": min(low,ent)*0.98, # Was 'sl'
-            "take_profit": high, # Was 'tp'
-            "rr_ratio": (high-ent)/(ent-(min(low,ent)*0.98)) if (ent-(min(low,ent)*0.98))>0 else 0 # Was 'rr'
+            "entry_price": ent, 
+            "current_diff": ((cur-ent)/cur)*100, 
+            "stop_loss": min(low,ent)*0.98, 
+            "take_profit": high, 
+            "rr_ratio": (high-ent)/(ent-(min(low,ent)*0.98)) if (ent-(min(low,ent)*0.98))>0 else 0 
         }
         
         try: 
@@ -216,7 +226,7 @@ def get_external_info(ticker):
 
 def generate_thesis(met, snip, ws, buys, fund):
     th = []; sig = "NEUTRAAL"
-    upt = met['price']>met['sma200']; zone = snip['current_diff']<1.5 # Fix key
+    upt = met['price']>met['sma200']; zone = snip['current_diff']<1.5 
     val_txt = ""
     if fund['fair_value']:
         if met['price'] < fund['fair_value'] * 0.8: val_txt = "💎 **VALUE:** Aandeel is goedkoop."
@@ -280,6 +290,17 @@ if page == "🔎 Markt Analyse":
             else: k4.metric("Fair Value", "N/A", "Verlieslatend")
 
             st.info(f"**Zenith Thesis:** {thesis}")
+            
+            # --- HIER ZIT DE HERSTELDE SNIPER SECTIE ---
+            st.markdown("---")
+            st.subheader("🎯 Sniper Entry Setup (De Ideale Prijs)")
+            s1, s2, s3, s4 = st.columns(4)
+            msg = "✅ NU KOPEN!" if snip['current_diff'] < 1.5 else f"Wacht (-{snip['current_diff']:.1f}%)"
+            s1.metric("1. Entry (Ideaal)", f"{curr_sym}{snip['entry_price']:.2f}", msg)
+            s2.metric("2. Stop Loss", f"{curr_sym}{snip['stop_loss']:.2f}")
+            s3.metric("3. Take Profit", f"{curr_sym}{snip['take_profit']:.2f}")
+            rr_c = "green" if snip['rr_ratio']>=2 else "orange"
+            s4.markdown(f"**4. Risk/Reward:** :{rr_c}[1 : {snip['rr_ratio']:.1f}]")
             
             st.subheader("📈 Technical Chart")
             end = df.index[-1]; start = end - pd.DateOffset(years=1); plot_df = df.loc[start:end]
