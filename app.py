@@ -10,10 +10,9 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v9.0", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v10.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- INITIALISEER SESSIE ---
 if 'portfolio' not in st.session_state:
     st.session_state['portfolio'] = []
 
@@ -26,14 +25,63 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- PRESET LIJSTEN (DE AUTOMATISCHE ZOEKER) ---
+# --- PRESETS ---
 PRESETS = {
-    "✍️ Eigen Invoer": "",
-    "🇺🇸 Big Tech & AI (Magnificent 7+)": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, AVGO, ORCL, PLTR",
-    "🇪🇺 AEX & Bel20 (Lokaal)": "ASML.AS, ADYEN.AS, BES.AS, SHELL.AS, HEIA.AS, UNA.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR",
-    "🚀 High Volatility & Crypto Stocks": "COIN, MSTR, SMCI, MARA, HOOD, SOFI, RIVN, NIO, DKNG, SQ",
-    "🛡️ Dividend & Value (Veilig)": "KO, JNJ, PEP, PG, MCD, O, V, MA, BRK-B, DIS, WMT"
+    "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR",
+    "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BES.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR",
+    "🚀 High Growth": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN",
+    "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
+
+# --- THESIS ENGINE (NIEUW: HET BREIN) ---
+def generate_thesis(ticker, metrics, buys, news_sentiment):
+    """
+    Deze functie fungeert als een 'AI Analist'. Hij kijkt naar de combinatie
+    van alle datapunten en schrijft een conclusie in menselijke taal.
+    """
+    thesis = []
+    signal_strength = "NEUTRAAL"
+    
+    # 1. Trend Analyse
+    if metrics['price'] > metrics['sma200']:
+        trend_text = "Het aandeel bevindt zich in een gezonde opwaartse trend (boven 200MA)."
+    else:
+        trend_text = "Het aandeel zit in een neerwaartse trend en heeft moeite momentum te vinden."
+    
+    # 2. De "Gouden Combinaties" (Complex Logic)
+    
+    # Scenario A: The "Dip Buy" (Trend UP + RSI Low)
+    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 35:
+        thesis.append(f"🔥 **GROTE KANS:** {trend_text} De huidige pullback (RSI {metrics['rsi']:.0f}) biedt een klassiek instapmoment in een sterke trend.")
+        signal_strength = "STERK KOPEN"
+        
+    # Scenario B: The "Falling Knife" (Trend DOWN + RSI Low)
+    elif metrics['price'] < metrics['sma200'] and metrics['rsi'] < 30:
+        if buys > 0:
+            thesis.append(f"💎 **CONTRARIAN KANS:** {trend_text} Echter, de RSI is extreem laag én insiders kopen aandelen. Dit wijst op een mogelijke bodemvorming.")
+            signal_strength = "SPECULATIEF KOPEN"
+        else:
+            thesis.append(f"⚠️ **RISICO:** {trend_text} Het aandeel is 'Oversold', maar zonder insider-steun is dit mogelijk een 'Falling Knife'. Wacht op bevestiging.")
+            signal_strength = "AFWACHTEN"
+
+    # Scenario C: The "Hype Train" (Trend UP + RSI High + Positive News)
+    elif metrics['price'] > metrics['sma200'] and metrics['rsi'] > 70:
+        if news_sentiment >= 2:
+            thesis.append(f"🚀 **MOMENTUM:** {trend_text} Het sentiment is euforisch. Let op: met een RSI van {metrics['rsi']:.0f} is het aandeel 'Overbought'. Winst nemen kan verstandig zijn.")
+            signal_strength = "HOUDEN / WINST NEMEN"
+        else:
+            thesis.append(f"🛑 **CORRECTIE GEVAAR:** {trend_text} De prijs is echter hard opgelopen (Overbought). Zonder vers nieuws is een terugval waarschijnlijk.")
+            signal_strength = "VERKOPEN"
+            
+    # Default Scenario
+    else:
+        thesis.append(f"ℹ️ **ANALYSE:** {trend_text} De technische indicatoren zijn momenteel gemengd (RSI: {metrics['rsi']:.0f}).")
+        
+        if buys > 0: thesis.append(f"Positief is wel dat insiders recent {buys} keer aandelen kochten, wat duidt op vertrouwen.")
+        if news_sentiment >= 2: thesis.append("Het AI-sentiment in het nieuws is overwegend positief.")
+        elif news_sentiment <= -1: thesis.append("Het nieuws-sentiment is echter negatief, wat druk op de koers kan houden.")
+
+    return " ".join(thesis), signal_strength
 
 # --- HULPFUNCTIES ---
 def get_current_price(ticker):
@@ -74,8 +122,7 @@ def get_zenith_data(ticker):
             "var": np.percentile(df['Returns'].dropna(), 5)
         }
         return df, metrics
-    except:
-        return None, None
+    except: return None, None
 
 def get_external_info(ticker):
     buys, news_results = 0, []
@@ -105,18 +152,14 @@ def get_external_info(ticker):
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.header("Navigatie")
 page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"])
-
 st.sidebar.markdown("---")
 currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
-
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Credits")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
-st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
 # ==========================================
-# PAGINA 1: MARKT ANALYSE
+# PAGINA 1: MARKT ANALYSE (THE ANALYST)
 # ==========================================
 if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
@@ -130,27 +173,34 @@ if page == "🔎 Markt Analyse":
         df, metrics = get_zenith_data(ticker_input)
         
         if df is not None:
-            with st.spinner('Bezig met volledige AI scan...'):
+            with st.spinner('AI Analist is aan het schrijven...'):
                 buys, news = get_external_info(ticker_input)
             
+            # SCORING
             score = 0
-            pros, cons = [], []
-            if metrics['market_bull']: score += 20; pros.append("Markt (S&P500) is Bullish")
-            else: cons.append("Markt is onzeker")
-            if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
-            else: cons.append("Trend is Negatief (< 200MA)")
-            if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f})")
-            elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f})")
-            if buys > 0: score += 20; pros.append(f"Insiders kopen ({buys}x)")
+            if metrics['market_bull']: score += 20
+            if metrics['price'] > metrics['sma200']: score += 30
+            if metrics['rsi'] < 30: score += 20
+            if buys > 0: score += 20
             pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
-            if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
+            if pos_news >= 2: score += 10
+            
+            # --- DE NIEUWE FEATURE: THESIS ---
+            thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news)
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Zenith Score", f"{score}/100")
-            c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
-            c3.metric("RSI", f"{metrics['rsi']:.1f}")
-            c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
+            # HEADER
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1: st.metric("Zenith Score", f"{score}/100")
+            with c2: 
+                # Kleur van signaal bepalen
+                sig_color = "green" if "KOPEN" in signal else "red" if "VERKOPEN" in signal else "orange"
+                st.markdown(f"### Advies: :{sig_color}[**{signal}**]")
+            with c3: st.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
 
+            # AI THESIS BLOCK
+            st.info(f"🤖 **Zenith AI Thesis:**\n\n{thesis_text}")
+
+            # GRAFIEK
             end_date = df.index[-1]
             start_date = end_date - pd.DateOffset(years=5)
             plot_df = df.loc[start_date:end_date]
@@ -160,30 +210,21 @@ if page == "🔎 Markt Analyse":
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
-            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+            fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
-
-            c_pros, c_cons = st.columns(2)
-            with c_pros:
-                st.success("### ✅ Sterke Punten")
-                for p in pros: st.write(f"• {p}")
-            with c_cons:
-                st.error("### ❌ Risico Punten")
-                for c in cons: st.write(f"• {c}")
-                
-            st.subheader("📰 Laatste Nieuws")
+            
+            # NIEUWS
+            st.subheader("📰 Relevant Nieuws")
             for n in news:
                 color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
                 st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
-        else:
-            st.error("Geen data gevonden.")
+        else: st.error("Geen data gevonden.")
 
 # ==========================================
-# PAGINA 2: MIJN PORTFOLIO
+# PAGINA 2: PORTFOLIO
 # ==========================================
 elif page == "💼 Mijn Portfolio":
-    st.title("💼 Mijn Portfolio Manager")
-    
+    st.title("💼 Portfolio Manager")
     with st.expander("➕ Aandeel Toevoegen", expanded=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
         with c1: p_ticker = st.text_input("Ticker", key="p_ticker").upper()
@@ -195,16 +236,15 @@ elif page == "💼 Mijn Portfolio":
             if st.button("Toevoegen"):
                 if p_ticker and p_amount > 0:
                     st.session_state['portfolio'].append({"Ticker": p_ticker, "Aantal": p_amount, "Koopprijs": p_avg})
-                    st.success(f"{p_ticker} toegevoegd!")
+                    st.success("Toegevoegd!")
                     st.rerun()
 
     if len(st.session_state['portfolio']) > 0:
         st.markdown("---")
         portfolio_data = []
-        total_value = 0
-        total_cost = 0
-
+        total_value, total_cost = 0, 0
         prog_bar = st.progress(0)
+        
         for i, item in enumerate(st.session_state['portfolio']):
             prog_bar.progress((i + 1) / len(st.session_state['portfolio']))
             current_price = get_current_price(item['Ticker'])
@@ -212,78 +252,56 @@ elif page == "💼 Mijn Portfolio":
             cost_val = item['Koopprijs'] * item['Aantal']
             total_value += cur_val
             total_cost += cost_val
-            profit_loss = cur_val - cost_val
+            profit = cur_val - cost_val
             profit_pct = ((current_price - item['Koopprijs']) / item['Koopprijs']) * 100 if item['Koopprijs'] > 0 else 0
             
-            color = "green" if profit_loss >= 0 else "red"
-            profit_str = f":{color}[{curr_symbol}{profit_loss:.2f} ({profit_pct:.1f}%)]"
-
+            color = "green" if profit >= 0 else "red"
             portfolio_data.append({
                 "Ticker": item['Ticker'],
                 "Aantal": item['Aantal'],
                 "Koopprijs": f"{curr_symbol}{item['Koopprijs']:.2f}",
                 "Huidige Prijs": f"{curr_symbol}{current_price:.2f}",
                 "Waarde": f"{curr_symbol}{cur_val:.2f}",
-                "Winst/Verlies": profit_str
+                "Winst/Verlies": f":{color}[{curr_symbol}{profit:.2f} ({profit_pct:.1f}%)]"
             })
         prog_bar.empty()
-
-        st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
-
+        st.write(pd.DataFrame(portfolio_data).to_markdown(index=False), unsafe_allow_html=True)
+        
         tot_profit = total_value - total_cost
         tot_profit_pct = (tot_profit / total_cost) * 100 if total_cost > 0 else 0
-        
         m1, m2, m3 = st.columns(3)
-        m1.metric("Totale Waarde", f"{curr_symbol}{total_value:.2f}")
-        m2.metric("Totale Inleg", f"{curr_symbol}{total_cost:.2f}")
-        m3.metric("Totaal Winst", f"{curr_symbol}{tot_profit:.2f}", f"{tot_profit_pct:.1f}%")
+        m1.metric("Waarde", f"{curr_symbol}{total_value:.2f}")
+        m2.metric("Inleg", f"{curr_symbol}{total_cost:.2f}")
+        m3.metric("Winst", f"{curr_symbol}{tot_profit:.2f}", f"{tot_profit_pct:.1f}%")
         
-        if st.button("🗑️ Portfolio Wissen"):
+        if st.button("🗑️ Wissen"):
             st.session_state['portfolio'] = []
             st.rerun()
-    else: st.write("Portfolio is leeg.")
+    else: st.write("Leeg.")
 
 # ==========================================
-# PAGINA 3: DEEP SCANNER (MET PRESETS)
+# PAGINA 3: DEEP SCANNER
 # ==========================================
 elif page == "📡 Deep Scanner":
     st.title("📡 Zenith Market Scanner")
-    st.info("Kies een sector of index om automatisch te scannen op koopjes.")
+    preset = st.selectbox("📂 Kies Markt:", list(PRESETS.keys()))
+    default_text = PRESETS.get(preset, "")
+    scan_input = st.text_area("Tickers:", default_text, height=80)
 
-    # 1. KEUZEMENU VOOR LIJSTEN
-    selected_preset = st.selectbox("📂 Kies een markt om te scannen:", list(PRESETS.keys()))
-    
-    # 2. INPUT VELD (Wordt automatisch gevuld)
-    default_text = PRESETS[selected_preset]
-    scan_input = st.text_area("Te scannen tickers:", default_text, height=100)
-
-    if st.button("🚀 Start Deep Scan"):
-        tickers_to_scan = [t.strip().upper() for t in scan_input.split(",") if t.strip()]
-        
+    if st.button("🚀 Start Scan"):
+        tickers = [t.strip().upper() for t in scan_input.split(",") if t.strip()]
         results = []
         my_bar = st.progress(0, text="Starten...")
         
-        for i, ticker in enumerate(tickers_to_scan):
-            my_bar.progress((i) / len(tickers_to_scan), text=f"🔍 Analyseren van {ticker}...")
-            
+        for i, ticker in enumerate(tickers):
+            my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
             df, metrics = get_zenith_data(ticker)
-            
             if df is not None:
                 buys, news = get_external_info(ticker)
-                
-                # SCORE BEREKENING
                 score = 0
                 if metrics['market_bull']: score += 20
                 if metrics['price'] > metrics['sma200']: score += 30
-                
-                # RSI Logic (Koopje?)
-                rsi_status = "Neutraal"
-                if metrics['rsi'] < 30: 
-                    score += 20
-                    rsi_status = "🟢 OVERSOLD (Koopje?)"
-                elif metrics['rsi'] > 70: 
-                    rsi_status = "🔴 OVERBOUGHT (Duur)"
-                
+                if metrics['rsi'] < 30: score += 20
                 if buys > 0: score += 20
                 pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
                 if pos_news >= 2: score += 10
@@ -291,31 +309,14 @@ elif page == "📡 Deep Scanner":
                 results.append({
                     "Ticker": ticker,
                     "Prijs": metrics['price'],
-                    "RSI Status": rsi_status,
+                    "RSI": round(metrics['rsi'], 1),
                     "Insiders": f"{buys} Buys" if buys > 0 else "-",
-                    "AI Sentiment": f"{pos_news} Positief",
-                    "Zenith Score": score
+                    "Score": score
                 })
-        
         my_bar.progress(1.0, text="Klaar!")
-        
         if results:
-            scan_df = pd.DataFrame(results).sort_values(by="Zenith Score", ascending=False)
-            st.success(f"✅ Scan voltooid! {len(results)} aandelen geanalyseerd.")
-            
-            st.dataframe(
-                scan_df,
-                column_config={
-                    "Zenith Score": st.column_config.ProgressColumn(
-                        "Score", format="%d", min_value=0, max_value=100,
-                    ),
-                    "Prijs": st.column_config.NumberColumn(format=f"{curr_symbol}%.2f"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.error("Geen data gevonden.")
+            st.dataframe(pd.DataFrame(results).sort_values(by="Score", ascending=False), use_container_width=True, hide_index=True)
+        else: st.error("Geen data.")
 
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
