@@ -8,3 +8,4 @@ torch
 feedparser
 scipy
 curl_cffi
+requests
