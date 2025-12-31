@@ -17,7 +17,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v23.1 Complete", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v23.2 Fix", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -366,25 +366,15 @@ elif page == "📡 Deep Scanner":
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
             try:
-                # UNPACK 9 vars
+                # FIX: 9 Variabelen unpacken (met peers)
                 df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
                 if df is not None:
                     sc = 0; reasons = []
-                    
-                    # 1. Tech & Trend
                     if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
                     if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
-                    
-                    # 2. Wall St
                     if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
-                    
-                    # 3. Value
                     if fund['fair_value'] and met['price'] < fund['fair_value']: sc += 15; reasons.append("Value 💎")
-                    
-                    # 4. Sniper
                     if snip['rr_ratio'] > 2: sc += 15; reasons.append("Sniper 🎯")
-                    
-                    # 5. Fundamenteel
                     if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
 
                     adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
@@ -403,19 +393,23 @@ elif page == "📡 Deep Scanner":
         st.session_state['res'] = res
     
     if 'res' in st.session_state:
-        df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
-        st.dataframe(
-            df, 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
-                "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_sym}%.2f")
-            }
-        )
-        st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
-        st.markdown("---")
-        c1, c2 = st.columns([3, 1])
-        options = [r['Ticker'] for r in st.session_state['res']]
-        sel = c1.selectbox("Kies:", options)
-        c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+        if not st.session_state['res']:
+            st.warning("Geen resultaten. Check tickers of Yahoo Rate Limit.")
+        else:
+            df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
+            st.dataframe(
+                df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                    "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_sym}%.2f")
+                }
+            )
+            st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
+            st.markdown("---")
+            c1, c2 = st.columns([3, 1])
+            options = [r['Ticker'] for r in st.session_state['res']]
+            if options:
+                sel = c1.selectbox("Kies:", options)
+                c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
