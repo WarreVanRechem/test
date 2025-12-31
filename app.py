@@ -20,10 +20,11 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- DATA FETCHING (Zonder het Ticker object terug te geven) ---
+# --- DATA FETCHING (Gecached: alleen simpele data teruggeven) ---
 @st.cache_data(ttl=3600)
 def get_analysis_data(ticker):
     stock = yf.Ticker(ticker)
+    # 7 jaar ophalen voor een zuivere 5-jaars grafiek met 200MA
     df = stock.history(period="7y")
     market = yf.Ticker("^GSPC").history(period="7y")
     
@@ -34,6 +35,7 @@ def get_analysis_data(ticker):
     df['SMA200'] = df['Close'].rolling(window=200).mean()
     df['Returns'] = df['Close'].pct_change()
     
+    # Risico Metrics
     downside = df.loc[df['Returns'] < 0, 'Returns']
     sortino = (df['Returns'].mean() * 252) / (downside.std() * np.sqrt(252)) if not downside.empty else 0
     var_95 = np.percentile(df['Returns'].dropna(), 5)
@@ -45,11 +47,11 @@ def get_analysis_data(ticker):
         "var": var_95,
         "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
     }
-    # We geven alleen de 'schone' data terug, geen complexe Ticker objecten
+    # Geen Ticker object teruggeven om Unserializable-fout te voorkomen
     return df, metrics
 
 def get_insider_info(ticker):
-    """Haalt insider data op zonder caching om fouten te voorkomen."""
+    """Haalt insider transacties op (niet gecached)."""
     try:
         stock = yf.Ticker(ticker)
         insider = stock.insider_transactions
@@ -64,16 +66,16 @@ def get_insider_info(ticker):
 # --- INTERFACE ---
 st.title("💎 Zenith Institutional Terminal")
 st.sidebar.header("Parameters")
-ticker = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
+ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
 
 if st.sidebar.button("Start Deep Analysis"):
-    df, metrics = get_analysis_data(ticker)
+    df, metrics = get_analysis_data(ticker_input)
     
     if df is not None:
-        buys, sells = get_insider_info(ticker)
+        buys, sells = get_insider_info(ticker_input)
         
-        # Scoring
+        # Scoring Systeem
         score = 0
         pros, cons = [], []
         if metrics['market_bull']: score += 20; pros.append("Markt is Bullish")
@@ -82,13 +84,13 @@ if st.sidebar.button("Start Deep Analysis"):
         else: cons.append("Trend is Negatief (< 200MA)")
         if buys > sells: score += 20; pros.append(f"Insiders kopen ({buys} tx)")
 
-        # Stats
+        # Resultaten balk
         col1, col2, col3 = st.columns(3)
         col1.metric("Zenith Score", f"{score}/100")
-        col2.metric("Prijs", f"${metrics['price']:.2f}")
+        col2.metric("Huidige Prijs", f"${metrics['price']:.2f}")
         col3.metric("Max Dagverlies (VaR)", f"${abs(metrics['var'] * capital):.0f}")
 
-        # --- 5 JAAR GRAFIEK ---
+        # --- GRAFIEK: EXACT 5 JAAR ---
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
@@ -106,6 +108,7 @@ if st.sidebar.button("Start Deep Analysis"):
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        # Details
         c1, c2 = st.columns(2)
         with c1:
             st.success("### Sterke Punten")
@@ -114,4 +117,4 @@ if st.sidebar.button("Start Deep Analysis"):
             st.error("### Risico Factoren")
             for c in cons: st.write(f"❌ {c}")
     else:
-        st.error("Geen data gevonden voor deze ticker.")
+        st.error("Geen data gevonden. Yahoo Finance blokkeert mogelijk de verbinding tijdelijk.")
