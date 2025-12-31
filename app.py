@@ -63,7 +63,7 @@ def get_external_info(ticker):
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
-        # Nieuws met User-Agent fix
+        # Nieuws
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
@@ -83,10 +83,17 @@ def get_external_info(ticker):
 # --- INTERFACE ---
 st.title("💎 Zenith Institutional Terminal") 
 
-# --- SIDEBAR MET JOUW INFO ---
+# --- SIDEBAR MET OPTIES ---
 st.sidebar.header("Instellingen")
+
+# 1. VALUTA KEUZE (NIEUW)
+currency_mode = st.sidebar.radio("Valuta Weergave", ["USD ($)", "EUR (€)"])
+curr_symbol = "$" if "USD" in currency_mode else "€"
+
 ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
-capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
+# Kapitaal past zich nu aan aan het gekozen symbool
+capital = st.sidebar.number_input(f"Inzet Kapitaal ({curr_symbol})", value=10000)
+
 run_btn = st.sidebar.button("Start Deep Analysis")
 
 st.sidebar.markdown("---")
@@ -120,26 +127,25 @@ if run_btn:
         pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
         if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
 
-        # --- METRICS ---
+        # --- METRICS MET JUISTE VALUTA ---
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Zenith Score", f"{score}/100")
-        c2.metric("Prijs", f"${metrics['price']:.2f}")
+        # Hier gebruiken we nu curr_symbol in plaats van hardcoded $
+        c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
         c3.metric("RSI", f"{metrics['rsi']:.1f}")
-        c4.metric("Risk (VaR)", f"${abs(metrics['var'] * capital):.0f}")
+        c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
 
-        # --- GRAFIEK MET RSI ---
+        # --- GRAFIEK ---
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
 
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
         
-        # Boven: Koers
         fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], 
                                      low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
         
-        # Onder: RSI
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
         fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
         fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
@@ -168,6 +174,6 @@ if run_btn:
     else:
         st.error("Geen data. Probeer over 1 minuut opnieuw.")
 
-# --- FOOTER MET JOUW NAAM ---
+# --- FOOTER ---
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
