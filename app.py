@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v17.4", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v18.0 Sniper", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -39,16 +39,10 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# --- MACRO DATA FUNCTIE ---
+# --- MACRO DATA ---
 @st.cache_data(ttl=600)
 def get_macro_data():
-    tickers = {
-        "S&P 500": "^GSPC",
-        "Nasdaq": "^IXIC",
-        "Goud": "GC=F",
-        "Olie (WTI)": "CL=F",
-        "10Y Rente": "^TNX"
-    }
+    tickers = {"S&P 500": "^GSPC", "Nasdaq": "^IXIC", "Goud": "GC=F", "Olie": "CL=F", "10Y Rente": "^TNX"}
     data = {}
     for name, ticker in tickers.items():
         try:
@@ -58,49 +52,35 @@ def get_macro_data():
             if price and prev:
                 change = ((price - prev) / prev) * 100
                 data[name] = (price, change)
-            else:
-                data[name] = (0, 0)
-        except:
-            data[name] = (0, 0)
+            else: data[name] = (0, 0)
+        except: data[name] = (0, 0)
     return data
 
 # --- THESIS ENGINE ---
-def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
+def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street, sniper):
     thesis = []
     signal_strength = "NEUTRAAL"
     
     # 1. Technisch
-    trend_text = "Technisch Bullish (>200MA)." if metrics['price'] > metrics['sma200'] else "Technisch zwak (<200MA)."
+    trend_text = "Trend is Bullish 🟢" if metrics['price'] > metrics['sma200'] else "Trend is Bearish 🔴"
     
-    # 2. Wall Street
-    ws_text = ""
-    if wall_street['target'] > 0:
-        if wall_street['upside'] > 10:
-            ws_text = f"Analisten zien {wall_street['upside']:.1f}% upside."
-        elif wall_street['upside'] < 0:
-            ws_text = f"Koers ligt boven het koersdoel (${wall_street['target']:.2f})."
-            
-    # 3. Dividend
-    div_text = ""
-    if fundamentals['dividend'] > 4.0:
-        div_text = f"Dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
+    # 2. Sniper Logic (NIEUW)
+    sniper_text = ""
+    if metrics['price'] <= sniper['lower_band'] * 1.02: # Binnen 2% van lower band
+        sniper_text = "🎯 **PERFECTE TIMING:** De prijs raakt de 'Lower Bollinger Band'. Statistisch gezien is de kans op een rebound hier het grootst."
+    elif metrics['price'] >= sniper['upper_band'] * 0.98:
+        sniper_text = "🛑 **WAARSCHUWING:** De prijs raakt de 'Upper Bollinger Band'. Kans op correctie is groot."
     
-    # --- LOGICA ---
-    if metrics['price'] > metrics['sma200'] and wall_street['upside'] > 10:
-        thesis.append(f"🔥 **STERK:** {trend_text} {ws_text} Fundamentals ondersteunen de groei.")
+    # 3. Confluence (Samenloop)
+    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 40 and wall_street['upside'] > 15:
+        thesis.append(f"🔥 **SNIPER BUY:** {trend_text}. {sniper_text} RSI is laag ({metrics['rsi']:.0f}) en analisten zien {wall_street['upside']:.0f}% upside.")
         signal_strength = "STERK KOPEN"
-        
-    elif metrics['rsi'] < 30:
-        thesis.append(f"🛒 **KOOPKANS:** Het aandeel is zwaar afgestraft (RSI < 30). Mogelijk een goed instapmoment.")
-        signal_strength = "KOOP (DIP)"
-
-    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] < 5:
-        thesis.append(f"⚠️ **OPGELET:** Trend is neerwaarts en analisten zien weinig potentieel.")
-        signal_strength = "AFBLIJVEN / VERKOPEN"
-        
+    elif metrics['price'] < metrics['sma200']:
+        thesis.append(f"⚠️ **AFWACHTEN:** {trend_text}. Hoewel goedkoop, vang geen vallend mes.")
+        signal_strength = "AFBLIJVEN"
     else:
-        thesis.append(f"ℹ️ **HOUDEN:** {trend_text} {ws_text} Geen uitgesproken signaal.")
-        if buys > 0: thesis.append(f"Positief: Insiders kochten {buys}x.")
+        thesis.append(f"ℹ️ **ANALYSE:** {trend_text}. {sniper_text}")
+        if pos_news >= 2: thesis.append("Nieuws is positief.")
 
     return " ".join(thesis), signal_strength
 
@@ -121,25 +101,15 @@ def get_zenith_data(ticker):
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
         market = yf.Ticker("^GSPC").history(period="7y")
-        
-        if df.empty: return None, None, None, None, None
+        if df.empty: return None, None, None, None, None, None
         
         info = stock.info
         current_p = df['Close'].iloc[-1]
-        
-        # --- NAAM OPHALEN (NIEUW) ---
         long_name = info.get('longName', ticker)
 
-        # Dividend Fix
-        div_rate = info.get('dividendRate') 
-        if div_rate is None: div_rate = info.get('trailingAnnualDividendRate')
-        dividend_pct = 0.0
-        if div_rate is not None and current_p > 0:
-            dividend_pct = (div_rate / current_p) * 100
-        else:
-            raw_div = info.get('dividendYield')
-            if raw_div is not None:
-                dividend_pct = raw_div * 100 if raw_div < 0.5 else raw_div
+        # Dividend
+        div_rate = info.get('dividendRate') or info.get('trailingAnnualDividendRate')
+        dividend_pct = (div_rate / current_p) * 100 if (div_rate and current_p > 0) else (info.get('dividendYield', 0) * 100 if info.get('dividendYield', 0) < 0.5 else info.get('dividendYield', 0))
 
         fundamentals = {
             "pe": info.get('trailingPE', 0),
@@ -150,49 +120,67 @@ def get_zenith_data(ticker):
         }
         
         # Wall Street
-        target_p = info.get('targetMeanPrice', 0)
-        if target_p is None: target_p = 0
+        target_p = info.get('targetMeanPrice', 0) or 0
         upside = ((target_p - current_p) / current_p) * 100 if target_p > 0 else 0
-        
-        wall_street = {
-            "target": target_p,
-            "recommendation": info.get('recommendationKey', 'none').upper(),
-            "upside": upside
-        }
+        wall_street = {"target": target_p, "recommendation": info.get('recommendationKey', 'none').upper(), "upside": upside}
 
-        # Metrics
+        # Indicators
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
-        df['Returns'] = df['Close'].pct_change()
         
+        # --- SNIPER CALCULATIONS (NIEUW) ---
+        # 1. Bollinger Bands (Volatiliteit)
+        df['SMA20'] = df['Close'].rolling(window=20).mean()
+        df['StdDev'] = df['Close'].rolling(window=20).std()
+        df['Upper'] = df['SMA20'] + (df['StdDev'] * 2)
+        df['Lower'] = df['SMA20'] - (df['StdDev'] * 2)
+        
+        # 2. Support / Resistance (Simpel: Laagste/Hoogste punt van laatste 50 dagen)
+        recent_low = df['Low'].tail(50).min()
+        recent_high = df['High'].tail(50).max()
+        
+        # 3. Risk/Reward Ratio
+        # Stop loss net onder de recente low
+        stop_loss = recent_low * 0.98 
+        # Target net onder de recente high
+        target_profit = recent_high
+        
+        risk = current_p - stop_loss
+        reward = target_profit - current_p
+        rr_ratio = reward / risk if risk > 0 else 0
+
+        sniper_metrics = {
+            "lower_band": df['Lower'].iloc[-1],
+            "upper_band": df['Upper'].iloc[-1],
+            "support": recent_low,
+            "resistance": recent_high,
+            "stop_loss": stop_loss,
+            "take_profit": target_profit,
+            "rr_ratio": rr_ratio
+        }
+
         # Alpha Calc
-        market_bull = False
         try:
             if not market.empty:
                 market_aligned = market['Close'].reindex(df.index, method='nearest')
-                market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
-                df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
                 df['Market_Perf'] = (market_aligned / market_aligned.iloc[0]) * df['Close'].iloc[0]
-            else:
-                df['Market_Perf'] = df['Close'] 
-        except:
-            df['Market_Perf'] = df['Close']
+            else: df['Market_Perf'] = df['Close']
+        except: df['Market_Perf'] = df['Close']
 
         metrics = {
-            "name": long_name, # Hier slaan we de naam op
+            "name": long_name,
             "price": current_p,
             "sma200": df['SMA200'].iloc[-1],
             "rsi": df['RSI'].iloc[-1],
-            "market_bull": market_bull,
-            "var": np.percentile(df['Returns'].dropna(), 5)
+            "market_bull": True, # Simplificatie
+            "var": np.percentile(df['Close'].pct_change().dropna(), 5)
         }
-        return df, metrics, fundamentals, wall_street, market
-    except Exception as e: 
-        return None, None, None, None, None
+        return df, metrics, fundamentals, wall_street, market, sniper_metrics
+    except Exception as e: return None, None, None, None, None, None
 
 def get_external_info(ticker):
     buys, news_results = 0, []
@@ -206,7 +194,6 @@ def get_external_info(ticker):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
         feed = feedparser.parse(response.content)
-        
         for entry in feed.entries[:5]:
             sentiment = "NEUTRAL"
             if ai_pipe:
@@ -244,17 +231,16 @@ m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("S&P 500", f"{macro['S&P 500'][0]:.0f}", f"{macro['S&P 500'][1]:.2f}%")
 m2.metric("Nasdaq", f"{macro['Nasdaq'][0]:.0f}", f"{macro['Nasdaq'][1]:.2f}%")
 m3.metric("Goud", f"${macro['Goud'][0]:.0f}", f"{macro['Goud'][1]:.2f}%")
-m4.metric("Olie", f"${macro['Olie (WTI)'][0]:.2f}", f"{macro['Olie (WTI)'][1]:.2f}%")
+m4.metric("Olie", f"${macro['Olie'][0]:.2f}", f"{macro['Olie'][1]:.2f}%")
 m5.metric("10Y Rente", f"{macro['10Y Rente'][0]:.2f}%", f"{macro['10Y Rente'][1]:.2f}%")
 st.markdown("---")
 
 # ==========================================
-# PAGINA 1: ANALYSE
+# PAGINA 1: ANALYSE (SNIPER MODE)
 # ==========================================
 if page == "🔎 Markt Analyse":
     col_input, col_cap = st.columns(2)
-    with col_input: 
-        ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
+    with col_input: ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
     with col_cap: capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
     auto_run = st.session_state.get('auto_run', False)
@@ -262,44 +248,57 @@ if page == "🔎 Markt Analyse":
     if st.button("Start Deep Analysis") or auto_run:
         if auto_run: st.session_state['auto_run'] = False
         
-        df, metrics, fund, wall_street, market_data = get_zenith_data(ticker_input)
+        df, metrics, fund, wall_street, market_data, sniper = get_zenith_data(ticker_input)
         
         if df is not None:
             with st.spinner('Analyseren...'):
                 buys, news = get_external_info(ticker_input)
             
             score = 0
-            if metrics['market_bull']: score += 15
-            if metrics['price'] > metrics['sma200']: score += 20
-            if metrics['rsi'] < 30: score += 15
+            if metrics['price'] > metrics['sma200']: score += 25
+            if metrics['rsi'] < 35: score += 20 # Strenger voor Sniper
+            elif metrics['rsi'] > 70: score -= 10
             if buys > 0: score += 15
             pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
             if pos_news >= 2: score += 10
             if 0 < fund['pe'] < 25: score += 10
             if wall_street['upside'] > 10: score += 15
+            if sniper['rr_ratio'] > 2: score += 10 # Bonus voor goede Risk/Reward
             
-            thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street)
+            thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street, sniper)
             
-            # --- TITEL MET VOLLEDIGE NAAM (NIEUW) ---
             st.markdown(f"## 🏢 {metrics['name']} ({ticker_input})")
             
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
-            
             if "KOPEN" in signal or "KOOP" in signal: sig_color = "green"
             elif "VERKOPEN" in signal or "AFBLIJVEN" in signal: sig_color = "red"
             else: sig_color = "orange"
-            
             c2.markdown(f"**Advies:** :{sig_color}[{signal}]")
             c3.metric("Huidige Prijs", f"{curr_symbol}{metrics['price']:.2f}")
             c4.metric("Analisten Doel", f"{curr_symbol}{wall_street['target']:.2f}", f"{wall_street['upside']:.1f}% Upside")
 
             st.markdown("---")
+            
+            # --- SNIPER SETUP SECTIE (NIEUW) ---
+            st.subheader("🎯 Sniper Entry Setup (De Wiskunde)")
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{metrics['price']:.2f}", help="De huidige marktprijs.")
+            s2.metric("2. Waar eruit als fout? (Stop Loss)", f"{curr_symbol}{sniper['stop_loss']:.2f}", help="Net onder de recente support (bodem).")
+            s3.metric("3. Waar winst pakken? (Target)", f"{curr_symbol}{sniper['take_profit']:.2f}", help="Bij de recente weerstand (plafond).")
+            
+            rr_color = "green" if sniper['rr_ratio'] >= 2 else "orange" if sniper['rr_ratio'] >= 1.5 else "red"
+            s4.markdown(f"**4. Risk/Reward:** :{rr_color}[**1 : {sniper['rr_ratio']:.1f}**]")
+            if sniper['rr_ratio'] < 2:
+                st.caption("⚠️ *Let op: De potentiële winst is kleiner dan 2x je risico. Professionele beleggers slaan dit vaak over.*")
+            else:
+                st.caption("✅ *Goede setup: Je kunt 2x zoveel winnen als verliezen.*")
+            st.markdown("---")
+
             col_thesis, col_fund = st.columns([2, 1])
             with col_thesis:
                 st.subheader("📝 Zenith AI Thesis")
                 st.info(f"{thesis_text}")
-                st.caption(f"**Wall Street Consensus:** {wall_street['recommendation'].replace('_', ' ')}")
             with col_fund:
                 st.subheader("🏢 Fundamenteel")
                 st.metric("P/E Ratio", f"{fund['pe']:.2f}")
@@ -307,18 +306,24 @@ if page == "🔎 Markt Analyse":
                 st.metric("Winstmarge", f"{fund['profit_margin']:.1f}%")
 
             st.markdown("---")
-            st.subheader("📈 Alpha Grafiek (vs S&P 500)")
+            st.subheader("📈 Bollinger Bands (Timing)")
+            
             end_date = df.index[-1]
-            start_date = end_date - pd.DateOffset(years=2)
+            start_date = end_date - pd.DateOffset(years=1) # 1 jaar is beter voor detail
             plot_df = df.loc[start_date:end_date]
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
             
-            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
+            # BOLLINGER BANDS
+            # 1. Lower Band (Steun)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Lower'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name="Lower Band"), row=1, col=1)
+            # 2. Upper Band (Weerstand) - fill='tonexty' vult de ruimte tussen lower en upper
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Upper'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1), fill='tonexty', fillcolor='rgba(128, 128, 128, 0.1)', name="Upper Band"), row=1, col=1)
+            # 3. SMA 20 (Midden)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA20'], line=dict(color='gray', width=1, dash='dot'), name="Midden (20MA)"), row=1, col=1)
             
-            if 'Market_Perf' in plot_df.columns:
-                 fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Market_Perf'], line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
+            # 4. Candlesticks
+            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
 
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
@@ -413,13 +418,12 @@ elif page == "📡 Deep Scanner":
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
             
             try:
-                df, metrics, fund, ws, _ = get_zenith_data(ticker)
+                df, metrics, fund, ws, _, sniper = get_zenith_data(ticker)
                 if df is not None:
                     buys, news = get_external_info(ticker)
                     
                     score = 0
                     reasons = []
-                    if metrics['market_bull']: score += 15
                     if metrics['price'] > metrics['sma200']: 
                         score += 20; reasons.append("🚀 Trend")
                     if metrics['rsi'] < 30: 
@@ -433,7 +437,9 @@ elif page == "📡 Deep Scanner":
                         score += 10; reasons.append("💰 Goedkoop")
                     if ws['upside'] > 10: 
                         score += 15; reasons.append("💼 Wall St")
-                    
+                    if sniper and sniper['rr_ratio'] > 2:
+                        score += 10; reasons.append("🎯 Good Entry")
+
                     advies = "NEUTRAAL"
                     if score >= 70: advies = "🟢 STERK KOPEN"
                     elif score >= 50: advies = "🟡 KOPEN / HOUDEN"
@@ -442,7 +448,6 @@ elif page == "📡 Deep Scanner":
                     results.append({
                         "Ticker": ticker,
                         "Prijs": metrics['price'],
-                        "Analist Doel": f"{curr_symbol}{ws['target']:.2f}",
                         "Score": score,
                         "Advies": advies,
                         "Reden": " + ".join(reasons) if reasons else "Geen triggers"
