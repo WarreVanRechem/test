@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v13.0", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v14.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 if 'portfolio' not in st.session_state:
@@ -48,20 +48,18 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
         elif wall_street['upside'] < 0:
             ws_text = f"Koers ligt boven het koersdoel (${wall_street['target']:.2f})."
             
-    # 3. Dividend (NIEUW IN LOGICA)
+    # 3. Dividend
     div_text = ""
     if fundamentals['dividend'] > 4.0:
-        div_text = f"Het dividendrendement is zeer aantrekkelijk ({fundamentals['dividend']:.2f}%)."
+        div_text = f"Het dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
     
     # 4. Scenarios
     if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
         thesis.append(f"🔥 **STRONG BUY:** {trend_text} {ws_text} Dubbele bevestiging!")
         signal_strength = "STERK KOPEN"
-        
     elif metrics['price'] < metrics['sma200'] and wall_street['upside'] > 30:
         thesis.append(f"⚠️ **OPGELET:** Analisten zijn optimistisch, maar de trend is neerwaarts. Risicovol.")
         signal_strength = "AFWACHTEN"
-
     else:
         thesis.append(f"ℹ️ **ANALYSE:** {trend_text} {ws_text} {div_text}")
         if buys > 0: thesis.append(f"Insiders kochten {buys}x.")
@@ -90,24 +88,20 @@ def get_zenith_data(ticker):
         
         info = stock.info
         
-        # --- DIVIDEND FIX ---
-        # We proberen eerst 'dividendYield', daarna 'trailingAnnualDividendYield'
+        # Dividend Fix
         raw_div = info.get('dividendYield')
-        if raw_div is None:
-            raw_div = info.get('trailingAnnualDividendYield')
-        
-        # Als het nog steeds None is, zetten we het op 0. Anders x100 voor percentage.
+        if raw_div is None: raw_div = info.get('trailingAnnualDividendYield')
         dividend_pct = raw_div * 100 if raw_div is not None else 0.0
 
         fundamentals = {
             "pe": info.get('trailingPE', 0),
             "market_cap": info.get('marketCap', 0),
-            "dividend": dividend_pct,  # Dit is de gefixte waarde
+            "dividend": dividend_pct,
             "sector": info.get('sector', "Onbekend"),
             "profit_margin": (info.get('profitMargins') or 0) * 100
         }
         
-        # Wall Street Data
+        # Wall Street
         current_p = df['Close'].iloc[-1]
         target_p = info.get('targetMeanPrice', 0)
         if target_p is None: target_p = 0
@@ -119,7 +113,7 @@ def get_zenith_data(ticker):
             "upside": upside
         }
 
-        # Indicators
+        # Metrics
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -167,8 +161,6 @@ st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebru
 st.sidebar.header("Navigatie")
 page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"])
 
-# Risk Calculator
-st.sidebar.markdown("---")
 with st.sidebar.expander("🧮 Risk Calculator"):
     acc_size = st.number_input("Account", value=10000)
     risk_pct = st.slider("Risico %", 0.5, 5.0, 1.0)
@@ -187,7 +179,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 
 # ==========================================
-# PAGINA 1: ANALYSE
+# PAGINA 1: ANALYSE (DASHBOARD MODE)
 # ==========================================
 if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
@@ -200,7 +192,7 @@ if page == "🔎 Markt Analyse":
         df, metrics, fund, wall_street = get_zenith_data(ticker_input)
         
         if df is not None:
-            with st.spinner('Analisten data & AI verwerken...'):
+            with st.spinner('Data ophalen en AI analyse draaien...'):
                 buys, news = get_external_info(ticker_input)
             
             # SCORE
@@ -216,54 +208,62 @@ if page == "🔎 Markt Analyse":
             
             thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street)
 
-            # TOP METRICS
+            # --- TOP METRICS ROW ---
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
-            
             sig_color = "green" if "KOPEN" in signal else "red" if "VERKOPEN" in signal else "off"
             c2.markdown(f"**Advies:** :{sig_color}[{signal}]")
-            
             c3.metric("Huidige Prijs", f"{curr_symbol}{metrics['price']:.2f}")
             c4.metric("Analisten Doel", f"{curr_symbol}{wall_street['target']:.2f}", f"{wall_street['upside']:.1f}% Upside")
 
-            # TABS
-            tab1, tab2, tab3, tab4 = st.tabs(["📝 AI Thesis", "📈 Grafieken", "🏢 Fundamenteel", "📰 Nieuws"])
+            st.markdown("---")
 
-            with tab1:
-                st.info(f"🤖 **Zenith AI Conclusie:**\n\n{thesis_text}")
-                st.markdown(f"**Wall Street Consensus:** {wall_street['recommendation'].replace('_', ' ')}")
+            # --- MIDDEN: THESIS (LINKS) & FUNDAMENTEEL (RECHTS) ---
+            col_thesis, col_fund = st.columns([2, 1])
+            
+            with col_thesis:
+                st.subheader("📝 Zenith AI Thesis")
+                st.info(f"{thesis_text}")
+                st.caption(f"**Wall Street Consensus:** {wall_street['recommendation'].replace('_', ' ')}")
 
-            with tab2:
-                end_date = df.index[-1]
-                start_date = end_date - pd.DateOffset(years=2)
-                plot_df = df.loc[start_date:end_date]
-                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
-                fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-                colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
-                fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
-                fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
+            with col_fund:
+                st.subheader("🏢 Fundamenteel")
+                # We maken een mini-tabelletje met metrics
+                st.metric("P/E Ratio", f"{fund['pe']:.2f}")
+                st.metric("Dividend Yield", f"{fund['dividend']:.2f}%")
+                st.metric("Winstmarge", f"{fund['profit_margin']:.1f}%")
+                st.text(f"Sector: {fund['sector']}")
 
-            with tab3:
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.write("**Waardering:**")
-                    st.metric("P/E Ratio", f"{fund['pe']:.2f}")
-                    # HIER IS HET GEFIXT:
-                    st.metric("Dividend Yield", f"{fund['dividend']:.2f}%") 
-                with c2:
-                    st.write("**Bedrijf:**")
-                    st.metric("Sector", fund['sector'])
-                    st.metric("Winstmarge", f"{fund['profit_margin']:.1f}%")
+            # --- ONDER: GRAFIEK ---
+            st.markdown("---")
+            st.subheader("📈 Technische Grafiek")
+            end_date = df.index[-1]
+            start_date = end_date - pd.DateOffset(years=2)
+            plot_df = df.loc[start_date:end_date]
+            
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
+            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
+            colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
+            fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=3, col=1)
+            fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
+            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
 
-            with tab4:
-                for n in news:
+            # --- ONDER: NIEUWS ---
+            st.markdown("---")
+            st.subheader("📰 Laatste Nieuws")
+            if news:
+                # We tonen nieuws in 2 kolommen voor compactheid
+                n_cols = st.columns(2)
+                for i, n in enumerate(news):
+                    col = n_cols[i % 2]
                     color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
-                    st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+                    col.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+            else:
+                st.write("Geen recent nieuws gevonden.")
 
         else: st.error("Geen data gevonden.")
 
