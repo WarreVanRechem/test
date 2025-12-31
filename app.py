@@ -23,10 +23,10 @@ ai_pipe = load_ai()
 # --- DATA FETCHING (Gecacht: geeft alleen simpele types terug) ---
 @st.cache_data(ttl=3600)
 def get_analysis_data(ticker):
-    # We gebruiken een lokale variabele voor de ticker, we slaan hem niet op
+    """Haalt koersdata op en berekent metrics. Slaat GEEN Ticker-objecten op."""
     stock = yf.Ticker(ticker)
     
-    # We halen 7 jaar op om een zuivere 5-jaars grafiek inclusief 200MA te tonen
+    # Haal 7 jaar op voor een zuivere 5-jaars grafiek inclusief 200MA
     df = stock.history(period="7y")
     market = yf.Ticker("^GSPC").history(period="7y")
     
@@ -50,7 +50,7 @@ def get_analysis_data(ticker):
         "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
     }
     
-    # We geven GEEN 'stock' object terug, dit voorkomt de Unserializable error
+    # Geef GEEN 'stock' object terug om de Unserializable error te voorkomen
     return df, metrics
 
 def get_insider_info(ticker):
@@ -74,11 +74,11 @@ ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
 
 if st.sidebar.button("Start Deep Analysis"):
-    # We roepen de gecachte data aan
+    # Roep de gecachte data aan (geeft df en metrics terug)
     df, metrics = get_analysis_data(ticker_input)
     
     if df is not None:
-        # We roepen de niet-gecachte insider info aan
+        # Roep de niet-gecachte insider info aan
         buys, sells = get_insider_info(ticker_input)
         
         # Score berekening
@@ -100,20 +100,18 @@ if st.sidebar.button("Start Deep Analysis"):
             score += 20
             pros.append(f"Insiders kopen bij ({buys} transacties)")
 
-        # Resultaten balk
+        # Resultaten weergave
         col1, col2, col3 = st.columns(3)
         col1.metric("Zenith Score", f"{score}/100")
         col2.metric("Huidige Prijs", f"${metrics['price']:.2f}")
         col3.metric("Potentieel Dagverlies (VaR)", f"${abs(metrics['var'] * capital):.0f}")
 
         # --- GRAFIEK: EXACT 5 JAAR ---
-        # Bepaal het bereik voor de X-as
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
 
         fig = go.Figure()
-        # Candlesticks
         fig.add_trace(go.Candlestick(
             x=plot_df.index,
             open=plot_df['Open'],
@@ -122,7 +120,6 @@ if st.sidebar.button("Start Deep Analysis"):
             close=plot_df['Close'],
             name="Prijs"
         ))
-        # 200 MA (Gele lijn)
         fig.add_trace(go.Scatter(
             x=plot_df.index,
             y=plot_df['SMA200'],
@@ -135,7 +132,7 @@ if st.sidebar.button("Start Deep Analysis"):
             height=600,
             xaxis=dict(
                 type='date',
-                range=[start_date, end_date], # Forceer het bereik op 5 jaar
+                range=[start_date, end_date], # Forceer het bereik
                 rangeslider=dict(visible=False)
             ),
             yaxis=dict(autorange=True, fixedrange=False),
@@ -143,7 +140,6 @@ if st.sidebar.button("Start Deep Analysis"):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Pros & Cons sectie
         c1, c2 = st.columns(2)
         with c1:
             st.success("### Sterke Punten")
