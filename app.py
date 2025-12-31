@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v14.0", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v14.1", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 if 'portfolio' not in st.session_state:
@@ -88,10 +88,19 @@ def get_zenith_data(ticker):
         
         info = stock.info
         
-        # Dividend Fix
+        # --- DIVIDEND AUTO-CORRECTOR (NIEUW) ---
         raw_div = info.get('dividendYield')
         if raw_div is None: raw_div = info.get('trailingAnnualDividendYield')
-        dividend_pct = raw_div * 100 if raw_div is not None else 0.0
+        
+        dividend_pct = 0.0
+        if raw_div is not None:
+            # Als Yahoo '0.0002' geeft (voor 0.02%), moeten we *100 doen.
+            # Als Yahoo '0.02' geeft (voor 0.02%), moeten we NIET *100 doen.
+            # We nemen aan: alles onder 0.3 is waarschijnlijk een decimaal -> x100
+            if raw_div < 0.3:
+                dividend_pct = raw_div * 100
+            else:
+                dividend_pct = raw_div
 
         fundamentals = {
             "pe": info.get('trailingPE', 0),
