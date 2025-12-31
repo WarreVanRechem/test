@@ -10,22 +10,15 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v16.1", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v17.0 Pro", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- SESSION STATE INITIALISATIE ---
-if 'portfolio' not in st.session_state:
-    st.session_state['portfolio'] = []
+# --- SESSION STATE ---
+if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
+if 'nav_page' not in st.session_state: st.session_state['nav_page'] = "🔎 Markt Analyse"
+if 'selected_ticker' not in st.session_state: st.session_state['selected_ticker'] = "RDW"
 
-if 'nav_page' not in st.session_state:
-    st.session_state['nav_page'] = "🔎 Markt Analyse"
-
-if 'selected_ticker' not in st.session_state:
-    st.session_state['selected_ticker'] = "RDW"
-
-# --- CALLBACK FUNCTIE (DE FIX VOOR DE CRASH) ---
 def start_analysis_for(ticker):
-    """Zet de sessie variabelen goed VOORDAT de app herlaadt."""
     st.session_state['selected_ticker'] = ticker
     st.session_state['nav_page'] = "🔎 Markt Analyse"
     st.session_state['auto_run'] = True
@@ -45,6 +38,29 @@ PRESETS = {
     "🚀 High Growth": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN",
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
+
+# --- MACRO DATA FUNCTIE (NIEUW) ---
+@st.cache_data(ttl=600) # Elke 10 min verversen
+def get_macro_data():
+    tickers = {
+        "S&P 500": "^GSPC",
+        "Nasdaq": "^IXIC",
+        "Goud": "GC=F",
+        "Olie (WTI)": "CL=F",
+        "10Y Rente": "^TNX"
+    }
+    data = {}
+    for name, ticker in tickers.items():
+        try:
+            t = yf.Ticker(ticker)
+            # Fast info voor snelheid
+            price = t.fast_info.last_price
+            prev = t.fast_info.previous_close
+            change = ((price - prev) / prev) * 100
+            data[name] = (price, change)
+        except:
+            data[name] = (0, 0)
+    return data
 
 # --- THESIS ENGINE ---
 def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
@@ -97,8 +113,8 @@ def get_zenith_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
-        market = yf.Ticker("^GSPC").history(period="7y")
-        if df.empty: return None, None, None, None
+        market = yf.Ticker("^GSPC").history(period="7y") # Benchmark ophalen
+        if df.empty: return None, None, None, None, None
         
         info = stock.info
         current_p = df['Close'].iloc[-1]
@@ -142,6 +158,19 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         df['Returns'] = df['Close'].pct_change()
         
+        # --- ALPHA BEREKENING (NIEUW) ---
+        # We normaliseren beide naar 100% startpunt om te vergelijken
+        # We nemen de laatste 2 jaar voor de grafiek
+        start_compare = df.index[-500] if len(df) > 500 else df.index[0]
+        
+        # Zorg dat de market data dezelfde datum range heeft
+        market_subset = market.loc[df.index]
+        
+        # Bereken relatieve performance
+        df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
+        # Sla market data op in df voor makkelijk plotten (vul gaten op)
+        df['Market_Perf'] = (market_subset['Close'] / market_subset['Close'].iloc[0]) * df['Close'].iloc[0] 
+        
         metrics = {
             "price": current_p,
             "sma200": df['SMA200'].iloc[-1],
@@ -149,8 +178,10 @@ def get_zenith_data(ticker):
             "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1],
             "var": np.percentile(df['Returns'].dropna(), 5)
         }
-        return df, metrics, fundamentals, wall_street
-    except: return None, None, None, None
+        return df, metrics, fundamentals, wall_street, market
+    except Exception as e: 
+        print(e)
+        return None, None, None, None, None
 
 def get_external_info(ticker):
     buys, news_results = 0, []
@@ -177,15 +208,8 @@ def get_external_info(ticker):
     return buys, news_results
 
 # --- INTERFACE ---
-st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.header("Navigatie")
-
-# De Navigatie widget
-page = st.sidebar.radio(
-    "Ga naar:", 
-    ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"],
-    key="nav_page" 
-)
+page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"], key="nav_page")
 
 with st.sidebar.expander("🧮 Risk Calculator"):
     acc_size = st.number_input("Account", value=10000)
@@ -196,36 +220,40 @@ with st.sidebar.expander("🧮 Risk Calculator"):
         risk_per_share = entry_p - stop_p
         shares = (acc_size * (risk_pct/100)) / risk_per_share
         st.write(f"**Koop:** {int(shares)} stuks")
-    else: st.warning("Stop < Instap")
 
 currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
-
 st.sidebar.markdown("---")
-st.sidebar.markdown("Created by **[Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)**")
+st.sidebar.markdown("Created by **Warre Van Rechem**")
+
+# --- MACRO HEADER (PRO FEATURE) ---
+st.title("💎 Zenith Institutional Terminal") 
+macro = get_macro_data()
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("S&P 500", f"{macro['S&P 500'][0]:.0f}", f"{macro['S&P 500'][1]:.2f}%")
+m2.metric("Nasdaq", f"{macro['Nasdaq'][0]:.0f}", f"{macro['Nasdaq'][1]:.2f}%")
+m3.metric("Goud", f"${macro['Goud'][0]:.0f}", f"{macro['Goud'][1]:.2f}%")
+m4.metric("Olie", f"${macro['Olie (WTI)'][0]:.2f}", f"{macro['Olie (WTI)'][1]:.2f}%")
+m5.metric("10Y Rente", f"{macro['10Y Rente'][0]:.2f}%", f"{macro['10Y Rente'][1]:.2f}%")
+st.markdown("---")
 
 # ==========================================
 # PAGINA 1: ANALYSE (DASHBOARD)
 # ==========================================
 if page == "🔎 Markt Analyse":
-    st.title("💎 Zenith Institutional Terminal") 
-    
     col_input, col_cap = st.columns(2)
-    with col_input: 
-        ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
+    with col_input: ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
     with col_cap: capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
-    # Auto-run logica (checkt of we vanaf de scanner komen)
     auto_run = st.session_state.get('auto_run', False)
     
     if st.button("Start Deep Analysis") or auto_run:
-        # Zet auto_run direct weer uit
         if auto_run: st.session_state['auto_run'] = False
         
-        df, metrics, fund, wall_street = get_zenith_data(ticker_input)
+        df, metrics, fund, wall_street, market_data = get_zenith_data(ticker_input)
         
         if df is not None:
-            with st.spinner(f'Analyseren van {ticker_input}...'):
+            with st.spinner('Analyseren...'):
                 buys, news = get_external_info(ticker_input)
             
             score = 0
@@ -248,35 +276,44 @@ if page == "🔎 Markt Analyse":
             c4.metric("Analisten Doel", f"{curr_symbol}{wall_street['target']:.2f}", f"{wall_street['upside']:.1f}% Upside")
 
             st.markdown("---")
-
             col_thesis, col_fund = st.columns([2, 1])
             with col_thesis:
                 st.subheader("📝 Zenith AI Thesis")
                 st.info(f"{thesis_text}")
                 st.caption(f"**Wall Street Consensus:** {wall_street['recommendation'].replace('_', ' ')}")
-
             with col_fund:
                 st.subheader("🏢 Fundamenteel")
                 st.metric("P/E Ratio", f"{fund['pe']:.2f}")
                 st.metric("Dividend Yield", f"{fund['dividend']:.2f}%")
                 st.metric("Winstmarge", f"{fund['profit_margin']:.1f}%")
-                st.text(f"Sector: {fund['sector']}")
 
             st.markdown("---")
-            st.subheader("📈 Technische Grafiek")
+            st.subheader("📈 Alpha Grafiek (vs S&P 500)")
+            # Plot
             end_date = df.index[-1]
             start_date = end_date - pd.DateOffset(years=2)
             plot_df = df.loc[start_date:end_date]
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
+            
+            # 1. Price vs Market (Alpha)
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
+            # Benchmark (De Markt) als referentie
+            # We schalen de markt naar de prijs van het aandeel zodat ze op elkaar passen
+            scale_factor = plot_df['Close'].iloc[0] / market_data.loc[plot_df.index[0]]['Close']
+            scaled_market = market_data.loc[plot_df.index]['Close'] * scale_factor
+            fig.add_trace(go.Scatter(x=plot_df.index, y=scaled_market, line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
+
+            # 2. Volume
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
+            
+            # 3. RSI
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=3, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
-            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+            fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
             st.markdown("---")
@@ -287,10 +324,7 @@ if page == "🔎 Markt Analyse":
                     col = n_cols[i % 2]
                     color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
                     col.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
-            else:
-                st.write("Geen recent nieuws gevonden.")
-
-        else: st.error("Geen data gevonden.")
+        else: st.error("Geen data.")
 
 # ==========================================
 # PAGINA 2: PORTFOLIO
@@ -335,7 +369,13 @@ elif page == "💼 Mijn Portfolio":
                 "Winst/Verlies": f":{color}[{curr_symbol}{profit:.2f} ({profit_pct:.1f}%)]"
             })
         prog_bar.empty()
-        st.write(pd.DataFrame(portfolio_data).to_markdown(index=False), unsafe_allow_html=True)
+        
+        df_port = pd.DataFrame(portfolio_data)
+        st.write(df_port.to_markdown(index=False), unsafe_allow_html=True)
+        
+        # PRO FEATURE: EXPORT KNOP
+        st.download_button("📥 Download Portfolio (CSV)", df_port.to_csv(index=False), "portfolio.csv", "text/csv")
+        
         tot_profit = total_value - total_cost
         tot_profit_pct = (tot_profit / total_cost) * 100 if total_cost > 0 else 0
         m1, m2, m3 = st.columns(3)
@@ -361,7 +401,7 @@ elif page == "📡 Deep Scanner":
         my_bar = st.progress(0, text="Starten...")
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
-            df, metrics, fund, ws = get_zenith_data(ticker)
+            df, metrics, fund, ws, _ = get_zenith_data(ticker)
             if df is not None:
                 buys, news = get_external_info(ticker)
                 
@@ -396,17 +436,15 @@ elif page == "📡 Deep Scanner":
                     "Reden": " + ".join(reasons) if reasons else "Geen triggers"
                 })
         my_bar.progress(1.0, text="Klaar!")
-        
-        if results:
-            st.session_state['scan_results'] = results 
-        else:
-            st.error("Geen data.")
+        if results: st.session_state['scan_results'] = results 
+        else: st.error("Geen data.")
 
     if 'scan_results' in st.session_state and st.session_state['scan_results']:
         results = st.session_state['scan_results']
+        df_scan = pd.DataFrame(results).sort_values(by="Score", ascending=False)
         
         st.dataframe(
-            pd.DataFrame(results).sort_values(by="Score", ascending=False), 
+            df_scan, 
             use_container_width=True, 
             hide_index=True,
             column_config={
@@ -414,15 +452,14 @@ elif page == "📡 Deep Scanner":
                 "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_symbol}%.2f")
             }
         )
+        # PRO FEATURE: EXPORT KNOP
+        st.download_button("📥 Download Scan Resultaten (CSV)", df_scan.to_csv(index=False), "scanner_results.csv", "text/csv")
 
         st.markdown("---")
         st.subheader("🔍 Wil je een aandeel dieper analyseren?")
         c1, c2 = st.columns([3, 1])
-        
         options = [r['Ticker'] for r in results]
         selected_scan = c1.selectbox("Kies uit de lijst:", options)
-        
-        # --- HIER ZIT DE FIX ---
         c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(selected_scan,))
 
 st.markdown("---")
