@@ -8,26 +8,45 @@ from transformers import pipeline
 import feedparser
 from scipy.stats import norm
 import warnings
+import requests # Nieuw: nodig voor de sessie
 
 # --- CONFIGURATIE ---
 st.set_page_config(page_title="Zenith Terminal", layout="wide", page_icon="📈")
 warnings.filterwarnings("ignore")
 
+# --- FIX VOOR RATE LIMITS ---
+@st.cache_resource
+def get_session():
+    """Maakt een sessie aan met een User-Agent om blokkades te voorkomen."""
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+    return session
+
 @st.cache_resource
 def load_ai():
     try:
-        # We laden een lichte versie van FinBERT voor snellere hosting
         return pipeline("sentiment-analysis", model="ProsusAI/finbert")
     except:
         return None
 
 ai_pipe = load_ai()
+custom_session = get_session()
 
 # --- ANALYSE FUNCTIES ---
 def get_data(ticker):
-    stock = yf.Ticker(ticker)
-    df = stock.history(period="2y")
-    market = yf.Ticker("^GSPC").history(period="2y")
+    # Gebruik de aangepaste sessie hier
+    stock = yf.Ticker(ticker, session=custom_session)
+    
+    try:
+        # Gebruik een kortere periode als de limiet blijft opspelen
+        df = stock.history(period="2y")
+        market = yf.Ticker("^GSPC", session=custom_session).history(period="2y")
+    except Exception as e:
+        st.error(f"Yahoo Finance weigert verbinding: {e}")
+        return None, None, None
+        
     if df.empty: return None, None, None
     
     df['SMA200'] = df['Close'].rolling(200).mean()
@@ -104,4 +123,4 @@ if st.sidebar.button("Run Deep Analysis"):
             st.error("### Risico Factoren")
             for c in cons: st.write(f"❌ {c}")
     else:
-        st.error("Ticker niet gevonden. Controleer het symbool.")
+        st.info("Yahoo Finance beperkt momenteel de toegang vanaf de server. Probeer het over enkele minuten opnieuw.")
