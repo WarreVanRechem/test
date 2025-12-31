@@ -11,7 +11,7 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith v6.2", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith door Warre V.R.", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 @st.cache_resource
@@ -81,17 +81,25 @@ def get_external_info(ticker):
     return buys, news_results
 
 # --- INTERFACE ---
-st.title("💎 Zenith Terminal v6.2") # Check of je dit ziet!
-st.write("Versie controle: RSI Indicator + Pros/Cons Sectie actief.")
+st.title("💎 Zenith Institutional Terminal") 
 
+# --- SIDEBAR MET JOUW INFO ---
+st.sidebar.header("Instellingen")
 ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
+run_btn = st.sidebar.button("Start Deep Analysis")
 
-if st.sidebar.button("Start Deep Analysis"):
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Credits")
+st.sidebar.markdown("Created by **Warre Van Rechem**")
+st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+# -----------------------------
+
+if run_btn:
     df, metrics = get_zenith_data(ticker_input)
     
     if df is not None:
-        with st.spinner('Bezig met ophalen van nieuws en insiders...'):
+        with st.spinner('Analyseren van data, insiders en nieuws...'):
             buys, news = get_external_info(ticker_input)
         
         # --- SCORING ---
@@ -139,7 +147,7 @@ if st.sidebar.button("Start Deep Analysis"):
         fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- PROS & CONS (ZIJN TERUG!) ---
+        # --- PROS & CONS ---
         st.subheader("⚖️ De Analyse")
         col_pros, col_cons = st.columns(2)
         with col_pros:
@@ -159,3 +167,7 @@ if st.sidebar.button("Start Deep Analysis"):
             
     else:
         st.error("Geen data. Probeer over 1 minuut opnieuw.")
+
+# --- FOOTER MET JOUW NAAM ---
+st.markdown("---")
+st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
