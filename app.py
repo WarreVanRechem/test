@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v17.2", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v17.3", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -32,10 +32,8 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- GEUPDATE PRESETS (CORRECTE TICKERS) ---
 PRESETS = {
     "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR",
-    # BELANGRIJK: Solvay is gesplitst in SYENS.BR en SOLB.BR. BES.AS heet soms BESI.AS.
     "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BESI.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR, INGA.AS",
     "🚀 High Growth": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN",
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
@@ -57,8 +55,11 @@ def get_macro_data():
             t = yf.Ticker(ticker)
             price = t.fast_info.last_price
             prev = t.fast_info.previous_close
-            change = ((price - prev) / prev) * 100
-            data[name] = (price, change)
+            if price and prev:
+                change = ((price - prev) / prev) * 100
+                data[name] = (price, change)
+            else:
+                data[name] = (0, 0)
         except:
             data[name] = (0, 0)
     return data
@@ -84,17 +85,22 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     if fundamentals['dividend'] > 4.0:
         div_text = f"Dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
     
-    # 4. Scenarios
-    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
-        thesis.append(f"🔥 **STRONG BUY:** {trend_text} {ws_text} Dubbele bevestiging!")
+    # --- LOGICA ---
+    if metrics['price'] > metrics['sma200'] and wall_street['upside'] > 10:
+        thesis.append(f"🔥 **STERK:** {trend_text} {ws_text} Fundamentals ondersteunen de groei.")
         signal_strength = "STERK KOPEN"
-    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] > 30:
-        thesis.append(f"⚠️ **OPGELET:** Analisten zijn optimistisch, maar de trend is neerwaarts. Risicovol.")
-        signal_strength = "AFWACHTEN"
+        
+    elif metrics['rsi'] < 30:
+        thesis.append(f"🛒 **KOOPKANS:** Het aandeel is zwaar afgestraft (RSI < 30). Mogelijk een goed instapmoment.")
+        signal_strength = "KOOP (DIP)"
+
+    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] < 5:
+        thesis.append(f"⚠️ **OPGELET:** Trend is neerwaarts en analisten zien weinig potentieel.")
+        signal_strength = "AFBLIJVEN / VERKOPEN"
+        
     else:
-        thesis.append(f"ℹ️ **ANALYSE:** {trend_text} {ws_text} {div_text}")
-        if buys > 0: thesis.append(f"Insiders kochten {buys}x.")
-        if pos_news >= 2: thesis.append("Sentiment is positief.")
+        thesis.append(f"ℹ️ **HOUDEN:** {trend_text} {ws_text} Geen uitgesproken signaal.")
+        if buys > 0: thesis.append(f"Positief: Insiders kochten {buys}x.")
 
     return " ".join(thesis), signal_strength
 
@@ -114,7 +120,10 @@ def get_zenith_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
+        
+        # We halen de benchmark op, maar negeren de tijdzone errors later
         market = yf.Ticker("^GSPC").history(period="7y")
+        
         if df.empty: return None, None, None, None, None
         
         info = stock.info
@@ -159,21 +168,37 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         df['Returns'] = df['Close'].pct_change()
         
-        # Alpha Calc
-        start_compare = df.index[-500] if len(df) > 500 else df.index[0]
-        market_subset = market.loc[df.index]
-        df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
-        df['Market_Perf'] = (market_subset['Close'] / market_subset['Close'].iloc[0]) * df['Close'].iloc[0] 
-        
+        # --- ALPHA CALC FIX VOOR EUROPESE AANDELEN ---
+        # We gebruiken reindex met 'nearest' om tijdzones op te lossen
+        market_bull = False
+        try:
+            if not market.empty:
+                # Synchroniseer de markt data met de aandeel data (vult gaten op)
+                market_aligned = market['Close'].reindex(df.index, method='nearest')
+                
+                # Market Bull check
+                market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
+                
+                # Alpha Curve berekenen
+                df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
+                df['Market_Perf'] = (market_aligned / market_aligned.iloc[0]) * df['Close'].iloc[0]
+            else:
+                # Fallback als markt data faalt
+                df['Market_Perf'] = df['Close'] 
+        except:
+            # Als alles faalt, gewoon geen alpha lijn
+            df['Market_Perf'] = df['Close']
+
         metrics = {
             "price": current_p,
             "sma200": df['SMA200'].iloc[-1],
             "rsi": df['RSI'].iloc[-1],
-            "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1],
+            "market_bull": market_bull,
             "var": np.percentile(df['Returns'].dropna(), 5)
         }
         return df, metrics, fundamentals, wall_street, market
     except Exception as e: 
+        # print(f"Error for {ticker}: {e}") # Debugging
         return None, None, None, None, None
 
 def get_external_info(ticker):
@@ -184,6 +209,7 @@ def get_external_info(ticker):
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
+        # Google News RSS werkt meestal goed
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
@@ -265,7 +291,6 @@ if page == "🔎 Markt Analyse":
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
             
-            # Color Fix
             if "KOPEN" in signal or "KOOP" in signal: sig_color = "green"
             elif "VERKOPEN" in signal or "AFBLIJVEN" in signal: sig_color = "red"
             else: sig_color = "orange"
@@ -297,11 +322,9 @@ if page == "🔎 Markt Analyse":
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
             
-            # Market Ref
-            if market_data is not None:
-                scale_factor = plot_df['Close'].iloc[0] / market_data.loc[plot_df.index[0]]['Close']
-                scaled_market = market_data.loc[plot_df.index]['Close'] * scale_factor
-                fig.add_trace(go.Scatter(x=plot_df.index, y=scaled_market, line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
+            # --- ALPHA FIX: Gebruik de voorberekende Market_Perf ---
+            if 'Market_Perf' in plot_df.columns:
+                 fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Market_Perf'], line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
 
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
@@ -319,7 +342,7 @@ if page == "🔎 Markt Analyse":
                     col = n_cols[i % 2]
                     color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
                     col.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
-        else: st.error("Geen data.")
+        else: st.error("Geen data gevonden.")
 
 # ==========================================
 # PAGINA 2: PORTFOLIO
@@ -395,7 +418,7 @@ elif page == "📡 Deep Scanner":
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
             
-            # VEILIGHEID: Try/Except blok in de loop zodat 1 fout aandeel de rest niet stopt
+            # --- ROBUUSTE LOOP ---
             try:
                 df, metrics, fund, ws, _ = get_zenith_data(ticker)
                 if df is not None:
@@ -431,12 +454,11 @@ elif page == "📡 Deep Scanner":
                         "Advies": advies,
                         "Reden": " + ".join(reasons) if reasons else "Geen triggers"
                     })
-            except:
-                continue # Als ticker faalt, ga door naar de volgende
+            except: continue # Skip fout aandeel
 
         my_bar.progress(1.0, text="Klaar!")
         if results: st.session_state['scan_results'] = results 
-        else: st.error("Geen data gevonden. Check de tickers.")
+        else: st.error("Geen data gevonden.")
 
     if 'scan_results' in st.session_state and st.session_state['scan_results']:
         results = st.session_state['scan_results']
