@@ -17,11 +17,13 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v23.0 Auto-Peer", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v23.1 Complete", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- DISCLAIMER ---
+# --- DISCLAIMER & CREDITS ---
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
+st.sidebar.markdown("---")
+st.sidebar.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
 # --- SESSION STATE ---
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
@@ -51,61 +53,36 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# --- NIEUWE SLIMME PEER FUNCTIE (DE UPGRADE) ---
-def get_smart_peers(ticker, info):
-    """
-    Kiest automatisch concurrenten op basis van de sector/industrie van het aandeel.
-    """
-    sector = info.get('sector', '').lower()
-    industry = info.get('industry', '').lower()
-    
-    # 1. Specifieke Industrie Mapping (De "Smart Map")
-    peers = []
-    
-    # Chips & Semi
-    if 'semicon' in industry: peers = ["NVDA", "AMD", "INTC", "TSM", "ASML"]
-    # Big Tech / Software
-    elif 'software' in industry or 'technology' in sector: peers = ["MSFT", "AAPL", "GOOGL", "ORCL", "ADBE"]
-    # Banken
-    elif 'bank' in industry: peers = ["JPM", "BAC", "C", "WFC", "HSBC"]
-    # Olie & Gas
-    elif 'oil' in industry or 'energy' in sector: peers = ["XOM", "CVX", "SHEL", "TTE", "BP"]
-    # Auto's
-    elif 'auto' in industry: peers = ["TSLA", "TM", "F", "GM", "STLA"]
-    # Pharma
-    elif 'drug' in industry or 'healthcare' in sector: peers = ["LLY", "JNJ", "PFE", "MRK", "NVS"]
-    # Consument
-    elif 'retail' in industry: peers = ["AMZN", "WMT", "TGT", "COST"]
-    # Vliegtuigen / Defensie
-    elif 'aerospace' in industry: peers = ["BA", "LMT", "RTX", "AIR.PA"]
-    
-    # 2. Fallback naar Sector ETF als we de industrie niet herkennen
-    if not peers:
-        if 'tech' in sector: peers = ["XLK", "QQQ"] # Tech ETF
-        elif 'health' in sector: peers = ["XLV"] # Health ETF
-        elif 'financ' in sector: peers = ["XLF"] # Financial ETF
-        elif 'energy' in sector: peers = ["XLE"] # Energy ETF
-        else: peers = ["^GSPC"] # S&P 500 (Laatste redmiddel)
+# --- FUNCTIES ---
 
-    # Verwijder het aandeel zelf uit de lijst en pak max 4
+def get_smart_peers(ticker, info):
+    sector = info.get('sector', '').lower(); industry = info.get('industry', '').lower()
+    peers = []
+    if 'semicon' in industry: peers = ["NVDA", "AMD", "INTC", "TSM", "ASML"]
+    elif 'software' in industry or 'technology' in sector: peers = ["MSFT", "AAPL", "GOOGL", "ORCL", "ADBE"]
+    elif 'bank' in industry: peers = ["JPM", "BAC", "C", "WFC", "HSBC"]
+    elif 'oil' in industry or 'energy' in sector: peers = ["XOM", "CVX", "SHEL", "TTE", "BP"]
+    elif 'auto' in industry: peers = ["TSLA", "TM", "F", "GM", "STLA"]
+    elif 'drug' in industry or 'healthcare' in sector: peers = ["LLY", "JNJ", "PFE", "MRK", "NVS"]
+    if not peers:
+        if 'tech' in sector: peers = ["XLK"]
+        elif 'health' in sector: peers = ["XLV"]
+        elif 'financ' in sector: peers = ["XLF"]
+        elif 'energy' in sector: peers = ["XLE"]
+        else: peers = ["^GSPC"]
     peers = [p for p in peers if p.upper() != ticker.upper() and p.split('.')[0] != ticker.split('.')[0]]
     return peers[:4]
 
 def compare_peers(main_ticker, peers_list):
     try:
-        tickers = [main_ticker] + peers_list
-        df = yf.download(tickers, period="1y")['Close']
+        df = yf.download([main_ticker] + peers_list, period="1y")['Close']
         if df.empty: return None
-        # Normaliseer naar % rendement
         return df.apply(lambda x: ((x / x.iloc[0]) - 1) * 100)
     except: return None
 
-# --- QUANT & DATA FUNCTIES ---
-
 def calculate_graham_number(info):
     try:
-        eps = info.get('trailingEps')
-        bvps = info.get('bookValue')
+        eps = info.get('trailingEps'); bvps = info.get('bookValue')
         if eps is None or bvps is None or eps <= 0 or bvps <= 0: return None
         return np.sqrt(22.5 * eps * bvps)
     except: return None
@@ -212,15 +189,10 @@ def get_zenith_data(ticker):
             df['M'] = (ma/ma.iloc[0])*df['Close'].iloc[0]; mb = m['Close'].iloc[-1]>m['Close'].rolling(200).mean().iloc[-1]
         except: df['M']=df['Close']; mb=True
         
-        # SLIMME PEERS OPHALEN
-        auto_peers = get_smart_peers(ticker, i)
-
+        peers = get_smart_peers(ticker, i)
         met = {"name": i.get('longName', ticker), "price": cur, "sma200": df['SMA200'].iloc[-1], "rsi": df['RSI'].iloc[-1], "bull": mb}
-        
-        return df, met, fund, ws, None, snip, None, None, auto_peers
-        
-    except Exception as e: 
-        return None, None, None, None, None, None, None, str(e), None
+        return df, met, fund, ws, None, snip, None, None, peers
+    except Exception as e: return None, None, None, None, None, None, None, str(e), None
 
 def get_external_info(ticker):
     try:
@@ -237,8 +209,8 @@ def generate_thesis(met, snip, ws, buys, fund):
     upt = met['price']>met['sma200']; zone = snip['diff']<1.5
     val_txt = ""
     if fund['fair_value']:
-        if met['price'] < fund['fair_value'] * 0.8: val_txt = "💎 **VALUE:** Aandeel is goedkoop (onder Fair Value)."
-        elif met['price'] > fund['fair_value'] * 1.2: val_txt = "⚠️ **WAARDE:** Aandeel is duur (boven Fair Value)."
+        if met['price'] < fund['fair_value'] * 0.8: val_txt = "💎 **VALUE:** Aandeel is goedkoop."
+        elif met['price'] > fund['fair_value'] * 1.2: val_txt = "⚠️ **WAARDE:** Aandeel is duur."
     
     if upt and zone: th.append(f"🔥 **PERFECT:** Trend Bullish + Buy Zone. {val_txt}"); sig="STERK KOPEN"
     elif not upt and zone: th.append(f"⚠️ **RISICO:** Trend Bearish + Buy Zone. {val_txt}"); sig="SPECULATIEF"
@@ -253,10 +225,6 @@ with st.sidebar.expander("🧮 Calculator"):
     acc=st.number_input("Acc",10000); risk=st.slider("Risico",0.5,5.0,1.0); ent=st.number_input("In",100.0); stp=st.number_input("Stop",95.0)
     if stp<ent: st.write(f"**Koop:** {int((acc*(risk/100))/(ent-stp))} stuks")
 curr_sym = "$" if "USD" in st.sidebar.radio("Valuta", ["USD", "EUR"]) else "€"
-
-# --- CREDITS ---
-st.sidebar.markdown("---")
-st.sidebar.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
 st.title("💎 Zenith Institutional Terminal")
 mac = get_macro_data()
@@ -274,8 +242,7 @@ if page == "🔎 Markt Analyse":
     if st.button("Start Deep Analysis"): st.session_state['analysis_active'] = True; st.session_state['selected_ticker'] = tick
     
     if st.session_state['analysis_active']:
-        # HIER UNPACKEN WE NU 9 VARIABELEN (INCL DE PEERS)
-        df, met, fund, ws, _, snip, _, err, peers_list = get_zenith_data(st.session_state['selected_ticker'])
+        df, met, fund, ws, _, snip, _, err, peers = get_zenith_data(st.session_state['selected_ticker'])
         
         if err: st.error(f"⚠️ {err}")
         elif df is not None:
@@ -317,15 +284,14 @@ if page == "🔎 Markt Analyse":
             
             t1, t2, t3, t4 = st.tabs(["⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
             with t1:
-                st.subheader(f"⚔️ {tick} vs Concurrenten")
-                if peers_list:
-                    st.write(f"Automatisch geselecteerd: {', '.join(peers_list)}")
+                st.subheader("Competitie Check")
+                if peers:
+                    st.write(f"Automatisch vergeleken met: {', '.join(peers)}")
                     if st.button("Laad Vergelijking"):
-                        pd_data = compare_peers(tick, peers_list)
+                        pd_data = compare_peers(tick, peers)
                         if pd_data is not None: st.line_chart(pd_data)
                         else: st.error("Geen data.")
                 else: st.warning("Geen concurrenten gevonden.")
-                
             with t2:
                 if st.button("🚀 Draai Backtest"):
                     res = run_backtest(tick)
@@ -400,21 +366,56 @@ elif page == "📡 Deep Scanner":
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
             try:
-                # OOK HIER DE FIX: 9 Variabelen unpacken (7e is error, 8e is peers)
-                df, met, _, ws, _, snip, _, _, _ = get_zenith_data(t)
+                # UNPACK 9 vars
+                df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
                 if df is not None:
-                    sc = 0
-                    if met['price']>met['sma200']: sc+=20
-                    if met['rsi']<30: sc+=15
-                    if ws['upside']>10: sc+=15
+                    sc = 0; reasons = []
+                    
+                    # 1. Tech & Trend
+                    if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
+                    if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
+                    
+                    # 2. Wall St
+                    if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
+                    
+                    # 3. Value
+                    if fund['fair_value'] and met['price'] < fund['fair_value']: sc += 15; reasons.append("Value 💎")
+                    
+                    # 4. Sniper
+                    if snip['rr_ratio'] > 2: sc += 15; reasons.append("Sniper 🎯")
+                    
+                    # 5. Fundamenteel
+                    if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
+
                     adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
-                    res.append({"Ticker": t, "Prijs": met['price'], "Score": sc, "Advies": adv})
+                    
+                    res.append({
+                        "Ticker": t, 
+                        "Prijs": met['price'], 
+                        "Analist Doel": f"{curr_sym}{ws['target']:.2f}",
+                        "Upside": f"{ws['upside']:.1f}%",
+                        "Score": sc, 
+                        "Advies": adv,
+                        "Reden": " + ".join(reasons) if reasons else "-"
+                    })
             except: continue
         bar.empty()
         st.session_state['res'] = res
     
     if 'res' in st.session_state:
         df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
-        st.dataframe(df, use_container_width=True)
-        sel = st.selectbox("Kies:", df['Ticker'])
-        st.button("Analyseer", on_click=start_analysis_for, args=(sel,))
+        st.dataframe(
+            df, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_sym}%.2f")
+            }
+        )
+        st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
+        st.markdown("---")
+        c1, c2 = st.columns([3, 1])
+        options = [r['Ticker'] for r in st.session_state['res']]
+        sel = c1.selectbox("Kies:", options)
+        c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
