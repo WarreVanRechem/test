@@ -32,10 +32,8 @@ def get_zenith_data(ticker):
         market = yf.Ticker("^GSPC").history(period="7y")
         if df.empty: return None, None
         
-        # Indicator Berekeningen
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         
-        # RSI (14)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -63,7 +61,6 @@ def get_external_info(ticker):
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
-        # Nieuws
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
@@ -81,37 +78,36 @@ def get_external_info(ticker):
     return buys, news_results
 
 # --- INTERFACE ---
-st.title("💎 Zenith Institutional Terminal") 
 
-# --- DISCLAIMER (NU PROMINENT BOVENAAN) ---
-st.warning("⚠️ **Disclaimer:** Deze applicatie is uitsluitend bedoeld voor educatieve doeleinden en analyse. De resultaten zijn gebaseerd op AI en historische data. Dit vormt **géén financieel advies**. Doe altijd uw eigen onderzoek voordat u belegt.")
+# 1. DISCLAIMER IN SIDEBAR (BOVENAAN)
+st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Alleen voor educatief gebruik.")
 
-# --- SIDEBAR ---
 st.sidebar.header("Instellingen")
-
-# Valuta
-currency_mode = st.sidebar.radio("Valuta Weergave", ["USD ($)", "EUR (€)"])
+currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
 
-ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
-capital = st.sidebar.number_input(f"Inzet Kapitaal ({curr_symbol})", value=10000)
+ticker_input = st.sidebar.text_input("Ticker", "RDW").upper()
+capital = st.sidebar.number_input(f"Kapitaal ({curr_symbol})", value=10000)
 run_btn = st.sidebar.button("Start Deep Analysis")
 
-# CREDITS
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Credits")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
-# -----------------------------
+
+# --- HOOFDSCHERM ---
+st.title("💎 Zenith Institutional Terminal v6.7") 
+
+# 2. DISCLAIMER OP HOOFDPAGINA
+st.warning("⚠️ **Wettelijke Disclaimer:** Deze applicatie en de gegenereerde signalen zijn uitsluitend bedoeld voor educatieve doeleinden. De maker (Warre Van Rechem) geeft **géén financieel advies**. Beleggen kent risico's.")
 
 if run_btn:
     df, metrics = get_zenith_data(ticker_input)
     
     if df is not None:
-        with st.spinner('Analyseren van data, insiders en nieuws...'):
+        with st.spinner('Bezig met analyseren...'):
             buys, news = get_external_info(ticker_input)
         
-        # --- SCORING ---
         score = 0
         pros, cons = [], []
         
@@ -121,60 +117,48 @@ if run_btn:
         if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
         else: cons.append("Trend is Negatief (< 200MA)")
             
-        if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f}) - Koopkans?")
-        elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f}) - Te duur?")
+        if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f})")
+        elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f})")
         
         if buys > 0: score += 20; pros.append(f"Insiders kopen ({buys}x)")
         
         pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
         if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
 
-        # --- METRICS ---
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Zenith Score", f"{score}/100")
         c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
         c3.metric("RSI", f"{metrics['rsi']:.1f}")
         c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
 
-        # --- GRAFIEK ---
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
 
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-        
-        fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], 
-                                     low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
+        fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-        
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
         fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
         fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
-        
         fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- PROS & CONS ---
         st.subheader("⚖️ De Analyse")
         col_pros, col_cons = st.columns(2)
         with col_pros:
             st.success("### ✅ Sterke Punten")
-            if not pros: st.write("Geen sterke punten.")
             for p in pros: st.write(f"• {p}")
         with col_cons:
             st.error("### ❌ Risico Punten")
-            if not cons: st.write("Geen grote risico's.")
             for c in cons: st.write(f"• {c}")
 
-        # --- NIEUWS ---
         st.subheader("📰 Laatste Nieuws")
         for n in news:
             color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
             st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
-            
     else:
-        st.error("Geen data. Probeer over 1 minuut opnieuw.")
+        st.error("Geen data.")
 
-# --- FOOTER ---
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
