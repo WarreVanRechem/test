@@ -83,6 +83,9 @@ def get_external_info(ticker):
 # --- INTERFACE ---
 st.title("💎 Zenith Institutional Terminal") 
 
+# --- DISCLAIMER (NU PROMINENT BOVENAAN) ---
+st.warning("⚠️ **Disclaimer:** Deze applicatie is uitsluitend bedoeld voor educatieve doeleinden en analyse. De resultaten zijn gebaseerd op AI en historische data. Dit vormt **géén financieel advies**. Doe altijd uw eigen onderzoek voordat u belegt.")
+
 # --- SIDEBAR ---
 st.sidebar.header("Instellingen")
 
@@ -94,14 +97,11 @@ ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input(f"Inzet Kapitaal ({curr_symbol})", value=10000)
 run_btn = st.sidebar.button("Start Deep Analysis")
 
-# CREDITS & DISCLAIMER IN SIDEBAR
+# CREDITS
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Credits")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
-
-st.sidebar.markdown("---")
-st.sidebar.warning("**Disclaimer:** Deze tool is uitsluitend bedoeld voor educatieve doeleinden. Dit is géén financieel advies. Doe altijd uw eigen onderzoek.")
 # -----------------------------
 
 if run_btn:
@@ -175,10 +175,6 @@ if run_btn:
     else:
         st.error("Geen data. Probeer over 1 minuut opnieuw.")
 
-# --- FOOTER MET COPYRIGHT & DISCLAIMER ---
+# --- FOOTER ---
 st.markdown("---")
-col_footer1, col_footer2 = st.columns(2)
-with col_footer1:
-    st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
-with col_footer2:
-    st.caption("Disclaimer: De informatie in deze applicatie is gebaseerd op AI-analyses en historische data. Dit vormt geen financieel advies. Beleggen brengt risico's met zich mee.")
+st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
