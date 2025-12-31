@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v17.3", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v17.4", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -120,14 +120,15 @@ def get_zenith_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
-        
-        # We halen de benchmark op, maar negeren de tijdzone errors later
         market = yf.Ticker("^GSPC").history(period="7y")
         
         if df.empty: return None, None, None, None, None
         
         info = stock.info
         current_p = df['Close'].iloc[-1]
+        
+        # --- NAAM OPHALEN (NIEUW) ---
+        long_name = info.get('longName', ticker)
 
         # Dividend Fix
         div_rate = info.get('dividendRate') 
@@ -168,28 +169,21 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         df['Returns'] = df['Close'].pct_change()
         
-        # --- ALPHA CALC FIX VOOR EUROPESE AANDELEN ---
-        # We gebruiken reindex met 'nearest' om tijdzones op te lossen
+        # Alpha Calc
         market_bull = False
         try:
             if not market.empty:
-                # Synchroniseer de markt data met de aandeel data (vult gaten op)
                 market_aligned = market['Close'].reindex(df.index, method='nearest')
-                
-                # Market Bull check
                 market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
-                
-                # Alpha Curve berekenen
                 df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
                 df['Market_Perf'] = (market_aligned / market_aligned.iloc[0]) * df['Close'].iloc[0]
             else:
-                # Fallback als markt data faalt
                 df['Market_Perf'] = df['Close'] 
         except:
-            # Als alles faalt, gewoon geen alpha lijn
             df['Market_Perf'] = df['Close']
 
         metrics = {
+            "name": long_name, # Hier slaan we de naam op
             "price": current_p,
             "sma200": df['SMA200'].iloc[-1],
             "rsi": df['RSI'].iloc[-1],
@@ -198,7 +192,6 @@ def get_zenith_data(ticker):
         }
         return df, metrics, fundamentals, wall_street, market
     except Exception as e: 
-        # print(f"Error for {ticker}: {e}") # Debugging
         return None, None, None, None, None
 
 def get_external_info(ticker):
@@ -209,7 +202,6 @@ def get_external_info(ticker):
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
-        # Google News RSS werkt meestal goed
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
@@ -287,7 +279,10 @@ if page == "🔎 Markt Analyse":
             if wall_street['upside'] > 10: score += 15
             
             thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street)
-
+            
+            # --- TITEL MET VOLLEDIGE NAAM (NIEUW) ---
+            st.markdown(f"## 🏢 {metrics['name']} ({ticker_input})")
+            
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
             
@@ -322,7 +317,6 @@ if page == "🔎 Markt Analyse":
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
             
-            # --- ALPHA FIX: Gebruik de voorberekende Market_Perf ---
             if 'Market_Perf' in plot_df.columns:
                  fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Market_Perf'], line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
 
@@ -418,7 +412,6 @@ elif page == "📡 Deep Scanner":
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
             
-            # --- ROBUUSTE LOOP ---
             try:
                 df, metrics, fund, ws, _ = get_zenith_data(ticker)
                 if df is not None:
@@ -454,7 +447,7 @@ elif page == "📡 Deep Scanner":
                         "Advies": advies,
                         "Reden": " + ".join(reasons) if reasons else "Geen triggers"
                     })
-            except: continue # Skip fout aandeel
+            except: continue
 
         my_bar.progress(1.0, text="Klaar!")
         if results: st.session_state['scan_results'] = results 
