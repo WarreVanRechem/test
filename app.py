@@ -83,23 +83,25 @@ def get_external_info(ticker):
 # --- INTERFACE ---
 st.title("💎 Zenith Institutional Terminal") 
 
-# --- SIDEBAR MET OPTIES ---
+# --- SIDEBAR ---
 st.sidebar.header("Instellingen")
 
-# 1. VALUTA KEUZE (NIEUW)
+# Valuta
 currency_mode = st.sidebar.radio("Valuta Weergave", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
 
 ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
-# Kapitaal past zich nu aan aan het gekozen symbool
 capital = st.sidebar.number_input(f"Inzet Kapitaal ({curr_symbol})", value=10000)
-
 run_btn = st.sidebar.button("Start Deep Analysis")
 
+# CREDITS & DISCLAIMER IN SIDEBAR
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Credits")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+
+st.sidebar.markdown("---")
+st.sidebar.warning("**Disclaimer:** Deze tool is uitsluitend bedoeld voor educatieve doeleinden. Dit is géén financieel advies. Doe altijd uw eigen onderzoek.")
 # -----------------------------
 
 if run_btn:
@@ -127,10 +129,9 @@ if run_btn:
         pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
         if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
 
-        # --- METRICS MET JUISTE VALUTA ---
+        # --- METRICS ---
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Zenith Score", f"{score}/100")
-        # Hier gebruiken we nu curr_symbol in plaats van hardcoded $
         c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
         c3.metric("RSI", f"{metrics['rsi']:.1f}")
         c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
@@ -174,6 +175,10 @@ if run_btn:
     else:
         st.error("Geen data. Probeer over 1 minuut opnieuw.")
 
-# --- FOOTER ---
+# --- FOOTER MET COPYRIGHT & DISCLAIMER ---
 st.markdown("---")
-st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+col_footer1, col_footer2 = st.columns(2)
+with col_footer1:
+    st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+with col_footer2:
+    st.caption("Disclaimer: De informatie in deze applicatie is gebaseerd op AI-analyses en historische data. Dit vormt geen financieel advies. Beleggen brengt risico's met zich mee.")
