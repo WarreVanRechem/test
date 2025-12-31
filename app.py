@@ -9,7 +9,7 @@ import feedparser
 import warnings
 import requests
 
-# Try-except voor scipy (nodig voor Portfolio Optimalisatie)
+# Try-except voor scipy
 try:
     from scipy.optimize import minimize
     SCIPY_AVAILABLE = True
@@ -17,18 +17,27 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v21.0 Complete", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v21.1 Fix", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- SESSION STATE ---
+# --- SESSION STATE SETUP (DE FIX) ---
+# We gebruiken dit om te onthouden dat we aan het analyseren zijn
+if 'analysis_active' not in st.session_state:
+    st.session_state['analysis_active'] = False
+
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
 if 'nav_page' not in st.session_state: st.session_state['nav_page'] = "🔎 Markt Analyse"
 if 'selected_ticker' not in st.session_state: st.session_state['selected_ticker'] = "RDW"
 
+# Functie om analyse te forceren (bv vanuit scanner)
 def start_analysis_for(ticker):
     st.session_state['selected_ticker'] = ticker
     st.session_state['nav_page'] = "🔎 Markt Analyse"
-    st.session_state['auto_run'] = True
+    st.session_state['analysis_active'] = True # Zet de schakelaar AAN
+
+# Reset functie als je een nieuwe ticker intypt
+def reset_analysis():
+    st.session_state['analysis_active'] = False
 
 @st.cache_resource
 def load_ai():
@@ -44,27 +53,24 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# --- QUANT FUNCTIONS ---
+# --- QUANT & DATA FUNCTIES ---
 
 def run_backtest(ticker, period="5y"):
-    """Backtest de Zenith Strategie (Trend + RSI Dip)."""
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period=period)
-        if df.empty: return "Geen data."
-        if len(df) < 250: return "Te weinig data (<250 dagen)."
+        if df.empty or len(df) < 250: return None
         
-        df['SMA200'] = df['Close'].rolling(window=200).mean()
+        df['SMA200'] = df['Close'].rolling(200).mean()
         delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
         balance = 10000; shares = 0; trades = []
         in_position = False
         
-        # Start pas na 200 dagen (SMA nodig)
         for i in range(201, len(df)):
             price = df['Close'].iloc[i]
             rsi = df['RSI'].iloc[i]
@@ -73,12 +79,10 @@ def run_backtest(ticker, period="5y"):
             
             if pd.isna(sma) or pd.isna(rsi): continue
 
-            # Buy Signal
             if not in_position and price > sma and rsi < 35:
                 shares = balance / price
                 balance = 0; in_position = True
                 trades.append({"Date": date, "Type": "BUY", "Price": price})
-            # Sell Signal
             elif in_position and (rsi > 75 or price < sma * 0.95):
                 balance = shares * price
                 shares = 0; in_position = False
@@ -86,15 +90,13 @@ def run_backtest(ticker, period="5y"):
                 
         final_val = balance if not in_position else shares * df['Close'].iloc[-1]
         ret = ((final_val - 10000) / 10000) * 100
-        
-        start_p = df['Close'].iloc[201]
-        end_p = df['Close'].iloc[-1]
+        start_p = df['Close'].iloc[201]; end_p = df['Close'].iloc[-1]
         bh_ret = ((end_p - start_p) / start_p) * 100
         
         return {"return": ret, "bh_return": bh_ret, "trades": len(trades), "final_value": final_val, "history": df}
-    except Exception as e: return f"Error: {str(e)}"
+    except: return None
 
-def run_monte_carlo(ticker, simulations=200): # 200 sims is sneller voor webapp
+def run_monte_carlo(ticker, simulations=200):
     try:
         data = yf.Ticker(ticker).history(period="1y")['Close']
         returns = data.pct_change().dropna()
@@ -103,7 +105,7 @@ def run_monte_carlo(ticker, simulations=200): # 200 sims is sneller voor webapp
         sim_runs = []
         for _ in range(simulations):
             prices = [data.iloc[-1]]
-            for _ in range(252): # 1 jaar vooruit
+            for _ in range(252): 
                 prices.append(prices[-1] * (1 + np.random.normal(mu, sigma)))
             sim_runs.append(prices)
         return np.array(sim_runs)
@@ -116,19 +118,16 @@ def optimize_portfolio(tickers):
         if data.empty or len(tickers) < 2: return None
         returns = data.pct_change()
         mean_ret = returns.mean(); cov_mat = returns.cov()
-        
         def neg_sharpe(weights):
             p_ret = np.sum(mean_ret * weights) * 252
             p_var = np.sqrt(np.dot(weights.T, np.dot(cov_mat, weights))) * np.sqrt(252)
             return -(p_ret - 0.04) / p_var if p_var > 0 else 0
-            
         constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
         bounds = tuple((0, 1) for _ in range(len(tickers)))
         res = minimize(neg_sharpe, len(tickers)*[1./len(tickers)], bounds=bounds, constraints=constraints)
         return dict(zip(tickers, res.x))
     except: return None
 
-# --- DATA FUNCTIES ---
 def get_current_price(ticker):
     try:
         stock = yf.Ticker(ticker)
@@ -163,7 +162,6 @@ def get_zenith_data(ticker):
         info = stock.info
         current_p = df['Close'].iloc[-1]
         
-        # Fundamentals
         d_rate = info.get('dividendRate') or info.get('trailingAnnualDividendRate')
         d_yield = (d_rate/current_p)*100 if (d_rate and current_p>0) else (info.get('dividendYield',0)*100 if info.get('dividendYield',0)<0.5 else info.get('dividendYield',0))
         fund = {"pe": info.get('trailingPE', 0), "dividend": d_yield, "sector": info.get('sector', "-"), "profit_margin": (info.get('profitMargins') or 0)*100}
@@ -171,7 +169,6 @@ def get_zenith_data(ticker):
         ws = {"target": info.get('targetMeanPrice', 0) or 0, "rec": info.get('recommendationKey', 'none').upper()}
         ws["upside"] = ((ws["target"] - current_p)/current_p)*100 if ws["target"] else 0
 
-        # Technicals
         df['SMA200'] = df['Close'].rolling(200).mean()
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['StdDev'] = df['Close'].rolling(20).std()
@@ -184,7 +181,6 @@ def get_zenith_data(ticker):
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # Sniper
         entry = df['Lower'].iloc[-1]; low = df['Low'].tail(50).min(); high = df['High'].tail(50).max()
         if pd.isna(entry): entry = current_p
         risk = entry - (min(low, entry)*0.98); reward = high - entry
@@ -193,7 +189,6 @@ def get_zenith_data(ticker):
             "stop_loss": min(low, entry)*0.98, "take_profit": high, "rr_ratio": reward/risk if risk > 0 else 0
         }
 
-        # Market Alpha
         try:
             mkt = yf.Ticker("^GSPC").history(period="7y")
             if not mkt.empty:
@@ -235,7 +230,6 @@ def generate_thesis(metrics, sniper, ws, buys):
     elif not uptrend and in_zone: thesis.append(f"⚠️ **RISICO:** {trend_txt}, maar prijs op support. Speculatief."); sig = "SPECULATIEF KOPEN"
     elif uptrend and not in_zone: thesis.append(f"✅ **HOUDEN:** {trend_txt}. Wacht op dip (-{diff:.1f}%)."); sig = "HOUDEN / WACHTEN"
     else: thesis.append(f"🛑 **AFBLIJVEN:** {trend_txt}."); sig = "AFBLIJVEN"
-    
     if ws['upside'] > 15: thesis.append(f"Analisten zien {ws['upside']:.0f}% upside.")
     return " ".join(thesis), sig
 
@@ -261,16 +255,23 @@ st.markdown("---")
 
 if page == "🔎 Markt Analyse":
     c1, c2 = st.columns(2)
-    with c1: tick = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
+    # on_change zorgt ervoor dat als je typt, de state reset wordt
+    with c1: tick = st.text_input("Ticker", value=st.session_state['selected_ticker'], on_change=reset_analysis).upper()
     with c2: cap = st.number_input(f"Virtueel Kapitaal ({curr_sym})", 10000)
     
-    auto = st.session_state.get('auto_run', False)
-    if st.button("Start Deep Analysis") or auto:
-        if auto: st.session_state['auto_run'] = False
-        df, met, fund, ws, _, snip, err = get_zenith_data(tick)
+    # 1. KNOP DRUKKEN? ZET STATE AAN
+    if st.button("Start Deep Analysis"):
+        st.session_state['analysis_active'] = True
+        st.session_state['selected_ticker'] = tick
+
+    # 2. IS STATE AAN? TOON DAN ALLES (OOK ALS JE OP BACKTEST DRUKT)
+    if st.session_state['analysis_active']:
+        df, met, fund, ws, _, snip, err = get_zenith_data(st.session_state['selected_ticker'])
         
         if err: st.error(f"⚠️ {err}")
         elif df is not None:
+            # We laden nieuws/buys alleen als het nog niet geladen is of bij refresh, 
+            # maar voor eenvoud laden we het hier (cache zorgt voor snelheid)
             with st.spinner('Analyseren...'): buys, news = get_external_info(tick)
             
             score = 0
@@ -303,43 +304,32 @@ if page == "🔎 Markt Analyse":
             
             st.info(f"**Zenith Thesis:** {thesis}")
             
-            # --- DE GROTE GRAFIEK IS TERUG! (3 ROWS) ---
             st.subheader("📈 Technical Chart (Full View)")
             end = df.index[-1]; start = end - pd.DateOffset(years=1); plot_df = df.loc[start:end]
-            
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
-            
-            # Row 1: Price, BB, SMA, Alpha
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Lower'], line=dict(color='rgba(0,255,0,0.3)'), name="Lower Band"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Upper'], line=dict(color='rgba(255,0,0,0.3)'), fill='tonexty', fillcolor='rgba(128,128,128,0.1)', name="Upper Band"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-            # Alpha Line Check
             if 'Market_Perf' in plot_df.columns:
-                # Schaal de markt zodat hij start op zelfde punt als aandeel
                 scale = plot_df['Close'].iloc[0] / plot_df['Market_Perf'].iloc[0]
                 fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Market_Perf']*scale, line=dict(color='white', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
-            
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
-            
-            # Row 2: Volume (TERUG!)
             cols = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=cols, name="Volume"), row=2, col=1)
-            
-            # Row 3: RSI
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB'), name="RSI"), row=3, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-            
             fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
             
-            # --- EXTRA TOOLS IN TABS ---
             t1, t2, t3 = st.tabs(["🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
             
+            # NU WERKT DE BACKTEST WEL OMDAT 'analysis_active' TRUE BLIJFT
             with t1:
                 if st.button("🚀 Draai Backtest (5 Jaar)"):
                     res = run_backtest(tick)
-                    if isinstance(res, str): st.error(res)
+                    if not res: st.error("Te weinig data.")
+                    elif isinstance(res, str): st.error(res)
                     else:
                         c1, c2, c3 = st.columns(3)
                         c1.metric("Strategy Return", f"{res['return']:.1f}%")
@@ -355,7 +345,7 @@ if page == "🔎 Markt Analyse":
                         for i in range(50): f_mc.add_trace(go.Scatter(y=sims[i], mode='lines', line=dict(width=1, color='rgba(0,255,255,0.1)'), showlegend=False))
                         avg = np.mean(sims, axis=0)
                         f_mc.add_trace(go.Scatter(y=avg, mode='lines', line=dict(width=3, color='yellow'), name='Verwachting'))
-                        f_mc.update_layout(template="plotly_dark", title="1 Jaar Toekomst (1000 Scenario's)")
+                        f_mc.update_layout(template="plotly_dark", title="1 Jaar Toekomst (Simulatie)")
                         st.plotly_chart(f_mc, use_container_width=True)
             
             with t3:
