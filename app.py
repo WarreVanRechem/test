@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v18.1 Sniper", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v18.2 Robust", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -65,21 +65,20 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street, 
     trend_text = "Trend is Bullish 🟢" if metrics['price'] > metrics['sma200'] else "Trend is Bearish 🔴"
     
     # 2. Sniper Logic
-    # We kijken nu naar de afstand tot de entry
     dist_to_entry = ((metrics['price'] - sniper['entry_price']) / metrics['price']) * 100
     
     sniper_text = ""
-    if dist_to_entry < 1.5: # Minder dan 1.5% verwijderd van de ideale entry
-        sniper_text = "🎯 **PERFECTE TIMING:** De prijs ligt in de 'Kill Zone' (Lower Band). Nu instappen."
+    if dist_to_entry < 1.5: 
+        sniper_text = "🎯 **PERFECTE TIMING:** De prijs ligt in de 'Kill Zone' (Lower Band)."
     elif dist_to_entry > 5:
-        sniper_text = f"⏳ **GEDULD:** De prijs is nog {dist_to_entry:.1f}% verwijderd van de ideale entry (Lower Band). Wacht op de dip."
+        sniper_text = f"⏳ **GEDULD:** Wacht op de dip (-{dist_to_entry:.1f}%)."
     
     # 3. Confluence
     if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
-        thesis.append(f"🔥 **SNIPER BUY:** {trend_text}. {sniper_text} Fundamentals en Wall St. zijn akkoord.")
+        thesis.append(f"🔥 **SNIPER BUY:** {trend_text}. {sniper_text}")
         signal_strength = "STERK KOPEN"
     elif metrics['price'] < metrics['sma200']:
-        thesis.append(f"⚠️ **AFWACHTEN:** {trend_text}. Vang geen vallend mes, wacht tot de trend draait.")
+        thesis.append(f"⚠️ **AFWACHTEN:** {trend_text}. Vang geen vallend mes.")
         signal_strength = "AFBLIJVEN"
     else:
         thesis.append(f"ℹ️ **ANALYSE:** {trend_text}. {sniper_text}")
@@ -99,16 +98,30 @@ def get_current_price(ticker):
 
 @st.cache_data(ttl=3600)
 def get_zenith_data(ticker):
+    """
+    ROBUUSTE VERSIE: Als één deel faalt (bv. Info), crasht de rest niet.
+    """
+    stock = yf.Ticker(ticker)
+    
+    # 1. Historische Data (CRITICAAL)
     try:
-        stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
-        market = yf.Ticker("^GSPC").history(period="7y")
-        if df.empty: return None, None, None, None, None, None
-        
-        info = stock.info
+        if df.empty: 
+            return None, None, None, None, None, None, "Geen historische prijsdata gevonden."
         current_p = df['Close'].iloc[-1]
-        long_name = info.get('longName', ticker)
+    except Exception as e:
+        return None, None, None, None, None, None, f"Fout bij ophalen historie: {e}"
 
+    # 2. Fundamentele Info (OPTIONEEL - Faalt vaak bij Yahoo)
+    info = {}
+    long_name = ticker
+    fundamentals = {"pe": 0, "market_cap": 0, "dividend": 0, "sector": "-", "profit_margin": 0}
+    wall_street = {"target": 0, "recommendation": "N/A", "upside": 0}
+    
+    try:
+        info = stock.info
+        long_name = info.get('longName', ticker)
+        
         # Dividend
         div_rate = info.get('dividendRate') or info.get('trailingAnnualDividendRate')
         dividend_pct = (div_rate / current_p) * 100 if (div_rate and current_p > 0) else (info.get('dividendYield', 0) * 100 if info.get('dividendYield', 0) < 0.5 else info.get('dividendYield', 0))
@@ -121,12 +134,20 @@ def get_zenith_data(ticker):
             "profit_margin": (info.get('profitMargins') or 0) * 100
         }
         
-        # Wall Street
         target_p = info.get('targetMeanPrice', 0) or 0
         upside = ((target_p - current_p) / current_p) * 100 if target_p > 0 else 0
         wall_street = {"target": target_p, "recommendation": info.get('recommendationKey', 'none').upper(), "upside": upside}
+    except:
+        pass # Als info faalt, gebruiken we de defaults (nullen)
 
-        # Indicators
+    # 3. Market Benchmark (OPTIONEEL)
+    market = None
+    try:
+        market = yf.Ticker("^GSPC").history(period="7y")
+    except: pass
+
+    # 4. Indicators Berekenen
+    try:
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         df['SMA20'] = df['Close'].rolling(window=20).mean()
         df['StdDev'] = df['Close'].rolling(window=20).std()
@@ -139,26 +160,19 @@ def get_zenith_data(ticker):
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # --- SNIPER CALCULATIONS 2.0 (CORRECTED) ---
-        # Entry is NIET current price, maar Lower Band (Support)
+        # Sniper
         optimal_entry = df['Lower'].iloc[-1]
-        
-        # Support/Resistance
         recent_low = df['Low'].tail(50).min()
         recent_high = df['High'].tail(50).max()
-        
-        # Stop loss net onder de recente low (of onder entry als low hoger is)
         stop_loss = min(recent_low, optimal_entry) * 0.98 
         target_profit = recent_high
-        
-        # Risk/Reward berekend vanaf de OPTIMAL ENTRY (niet current price)
         risk = optimal_entry - stop_loss
         reward = target_profit - optimal_entry
         rr_ratio = reward / risk if risk > 0 else 0
 
         sniper_metrics = {
-            "entry_price": optimal_entry, # DIT IS DE FIX
-            "current_diff": ((current_p - optimal_entry)/current_p) * 100, # Hoeveel % moeten we nog zakken?
+            "entry_price": optimal_entry,
+            "current_diff": ((current_p - optimal_entry)/current_p) * 100,
             "upper_band": df['Upper'].iloc[-1],
             "support": recent_low,
             "stop_loss": stop_loss,
@@ -166,9 +180,9 @@ def get_zenith_data(ticker):
             "rr_ratio": rr_ratio
         }
 
-        # Market Context
+        # Market Perf
         try:
-            if not market.empty:
+            if market is not None and not market.empty:
                 market_aligned = market['Close'].reindex(df.index, method='nearest')
                 df['Market_Perf'] = (market_aligned / market_aligned.iloc[0]) * df['Close'].iloc[0]
                 market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
@@ -187,8 +201,11 @@ def get_zenith_data(ticker):
             "market_bull": market_bull,
             "var": np.percentile(df['Close'].pct_change().dropna(), 5)
         }
-        return df, metrics, fundamentals, wall_street, market, sniper_metrics
-    except Exception as e: return None, None, None, None, None, None
+        
+        return df, metrics, fundamentals, wall_street, market, sniper_metrics, None # None = Geen error
+
+    except Exception as e:
+        return None, None, None, None, None, None, f"Fout bij berekeningen: {e}"
 
 def get_external_info(ticker):
     buys, news_results = 0, []
@@ -256,9 +273,13 @@ if page == "🔎 Markt Analyse":
     if st.button("Start Deep Analysis") or auto_run:
         if auto_run: st.session_state['auto_run'] = False
         
-        df, metrics, fund, wall_street, market_data, sniper = get_zenith_data(ticker_input)
+        # UNPACK inclusief error message
+        df, metrics, fund, wall_street, market_data, sniper, error_msg = get_zenith_data(ticker_input)
         
-        if df is not None:
+        if error_msg:
+            st.error(f"⚠️ Oeps: {error_msg}")
+        
+        elif df is not None:
             with st.spinner('Analyseren...'):
                 buys, news = get_external_info(ticker_input)
             
@@ -288,12 +309,10 @@ if page == "🔎 Markt Analyse":
 
             st.markdown("---")
             
-            # --- SNIPER SETUP SECTIE (DISPLAY FIX) ---
             st.subheader("🎯 Sniper Entry Setup")
             s1, s2, s3, s4 = st.columns(4)
             
-            # Slimme Entry Weergave
-            if sniper['current_diff'] < 1.0: # Minder dan 1% verschil
+            if sniper['current_diff'] < 1.0: 
                 s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{sniper['entry_price']:.2f}", "✅ NU KOPEN!")
             else:
                 s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{sniper['entry_price']:.2f}", f"Wacht (-{sniper['current_diff']:.1f}%)")
@@ -349,7 +368,8 @@ if page == "🔎 Markt Analyse":
                     col = n_cols[i % 2]
                     color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
                     col.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
-        else: st.error("Geen data gevonden.")
+        else:
+            if not error_msg: st.error("Onbekende fout: Geen data.")
 
 # ==========================================
 # PAGINA 2: PORTFOLIO
@@ -424,8 +444,10 @@ elif page == "📡 Deep Scanner":
         my_bar = st.progress(0, text="Starten...")
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
+            
             try:
-                df, metrics, fund, ws, _, sniper = get_zenith_data(ticker)
+                # UNPACK, negeer de error message in de scanner, skip gewoon
+                df, metrics, fund, ws, _, sniper, _ = get_zenith_data(ticker)
                 if df is not None:
                     buys, news = get_external_info(ticker)
                     
