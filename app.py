@@ -10,10 +10,10 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith door Warre V.R.", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v8.1", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- INITIALISEER SESSIE (TIJDELIJK GEHEUGEN) ---
+# --- INITIALISEER SESSIE ---
 if 'portfolio' not in st.session_state:
     st.session_state['portfolio'] = []
 
@@ -26,31 +26,20 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- SLIMME PRIJS CHECKER (ROBUUST) ---
+# --- HULPFUNCTIES ---
 def get_current_price(ticker):
-    """Haalt de prijs op, probeert 3 manieren om $0.00 te voorkomen."""
+    """Haalt de prijs op (Robuust)."""
     try:
         stock = yf.Ticker(ticker)
-        
-        # 1. Fast Info (Live)
         price = stock.fast_info.last_price
-        if price and not pd.isna(price) and price > 0:
-            return price
-            
-        # 2. Vandaag (History)
+        if price and not pd.isna(price) and price > 0: return price
         hist = stock.history(period="1d")
-        if not hist.empty:
-            return hist['Close'].iloc[-1]
-            
-        # 3. Laatste 5 dagen (Fallback voor weekend/illiquide)
+        if not hist.empty: return hist['Close'].iloc[-1]
         hist_5d = stock.history(period="5d")
-        if not hist_5d.empty:
-            return hist_5d['Close'].iloc[-1]
-            
+        if not hist_5d.empty: return hist_5d['Close'].iloc[-1]
     except: pass
     return 0.0
 
-# --- DATA FETCHING ---
 @st.cache_data(ttl=3600)
 def get_zenith_data(ticker):
     try:
@@ -67,11 +56,15 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         df['Returns'] = df['Close'].pct_change()
         
+        market_bull = False
+        if not market.empty:
+            market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
+
         metrics = {
             "price": df['Close'].iloc[-1],
             "sma200": df['SMA200'].iloc[-1],
             "rsi": df['RSI'].iloc[-1],
-            "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1],
+            "market_bull": market_bull,
             "var": np.percentile(df['Returns'].dropna(), 5)
         }
         return df, metrics
@@ -79,19 +72,22 @@ def get_zenith_data(ticker):
         return None, None
 
 def get_external_info(ticker):
+    """Haalt Insiders EN Nieuws op (De zware functie)."""
     buys, news_results = 0, []
     try:
+        # 1. Insider Check
         stock = yf.Ticker(ticker)
         insider = stock.insider_transactions
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
+        # 2. AI Nieuws Check
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(rss_url, headers=headers, timeout=5)
         feed = feedparser.parse(response.content)
         
-        for entry in feed.entries[:5]:
+        for entry in feed.entries[:5]: # Max 5 artikelen voor snelheid
             sentiment = "NEUTRAL"
             if ai_pipe:
                 try:
@@ -104,9 +100,8 @@ def get_external_info(ticker):
 
 # --- INTERFACE ---
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
-
 st.sidebar.header("Navigatie")
-page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio"])
+page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"])
 
 st.sidebar.markdown("---")
 currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
@@ -122,7 +117,7 @@ st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van
 # ==========================================
 if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
-    st.warning("⚠️ **Disclaimer:** Deze tool is uitsluitend educatief. Géén financieel advies. Doe altijd uw eigen onderzoek.")
+    st.warning("⚠️ **Disclaimer:** Deze tool is uitsluitend educatief. Géén financieel advies.")
 
     col_input, col_cap = st.columns(2)
     with col_input: ticker_input = st.text_input("Ticker", "RDW").upper()
@@ -132,7 +127,7 @@ if page == "🔎 Markt Analyse":
         df, metrics = get_zenith_data(ticker_input)
         
         if df is not None:
-            with st.spinner('Analyseren...'):
+            with st.spinner('Bezig met volledige AI scan...'):
                 buys, news = get_external_info(ticker_input)
             
             score = 0
@@ -181,16 +176,14 @@ if page == "🔎 Markt Analyse":
             st.error("Geen data gevonden.")
 
 # ==========================================
-# PAGINA 2: MIJN PORTFOLIO (LOCAL SESSION)
+# PAGINA 2: MIJN PORTFOLIO
 # ==========================================
 elif page == "💼 Mijn Portfolio":
     st.title("💼 Mijn Portfolio Manager")
-    st.info(f"Voeg hier je aandelen toe. Prijzen worden live opgehaald in {curr_symbol}.")
-
-    # INPUT
+    
     with st.expander("➕ Aandeel Toevoegen", expanded=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-        with c1: p_ticker = st.text_input("Ticker (bv. AAPL)", key="p_ticker").upper()
+        with c1: p_ticker = st.text_input("Ticker", key="p_ticker").upper()
         with c2: p_amount = st.number_input("Aantal", min_value=0.0, step=1.0, key="p_amount")
         with c3: p_avg = st.number_input(f"Koopprijs ({curr_symbol})", min_value=0.0, step=0.1, key="p_avg")
         with c4:
@@ -198,41 +191,27 @@ elif page == "💼 Mijn Portfolio":
             st.write("")
             if st.button("Toevoegen"):
                 if p_ticker and p_amount > 0:
-                    st.session_state['portfolio'].append({
-                        "Ticker": p_ticker,
-                        "Aantal": p_amount,
-                        "Koopprijs": p_avg
-                    })
+                    st.session_state['portfolio'].append({"Ticker": p_ticker, "Aantal": p_amount, "Koopprijs": p_avg})
                     st.success(f"{p_ticker} toegevoegd!")
                     st.rerun()
 
-    # OVERZICHT
     if len(st.session_state['portfolio']) > 0:
         st.markdown("---")
         portfolio_data = []
         total_value = 0
         total_cost = 0
 
-        # Progress bar voor het laden van prijzen
         prog_bar = st.progress(0)
-        
         for i, item in enumerate(st.session_state['portfolio']):
-            # Update balk
             prog_bar.progress((i + 1) / len(st.session_state['portfolio']))
-            
-            # Prijs ophalen (ROBUUSTE VERSIE)
             current_price = get_current_price(item['Ticker'])
-            
             cur_val = current_price * item['Aantal']
             cost_val = item['Koopprijs'] * item['Aantal']
-            
             total_value += cur_val
             total_cost += cost_val
-            
             profit_loss = cur_val - cost_val
             profit_pct = ((current_price - item['Koopprijs']) / item['Koopprijs']) * 100 if item['Koopprijs'] > 0 else 0
-
-            # Kleur bepalen
+            
             color = "green" if profit_loss >= 0 else "red"
             profit_str = f":{color}[{curr_symbol}{profit_loss:.2f} ({profit_pct:.1f}%)]"
 
@@ -244,13 +223,10 @@ elif page == "💼 Mijn Portfolio":
                 "Waarde": f"{curr_symbol}{cur_val:.2f}",
                 "Winst/Verlies": profit_str
             })
-            
         prog_bar.empty()
 
-        # Toon Tabel
-        st.write(pd.DataFrame(portfolio_data).to_markdown(index=False), unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
 
-        # Totaal Metrics
         tot_profit = total_value - total_cost
         tot_profit_pct = (tot_profit / total_cost) * 100 if total_cost > 0 else 0
         
@@ -262,9 +238,91 @@ elif page == "💼 Mijn Portfolio":
         if st.button("🗑️ Portfolio Wissen"):
             st.session_state['portfolio'] = []
             st.rerun()
+    else: st.write("Portfolio is leeg.")
+
+# ==========================================
+# PAGINA 3: DEEP SCANNER (FULL POWER)
+# ==========================================
+elif page == "📡 Deep Scanner":
+    st.title("📡 Zenith Deep Market Scanner")
+    st.info("⚠️ **Let op:** Deze scanner analyseert ALLES: Data + Nieuws (AI) + Insiders. Dit kan 3-5 seconden per aandeel duren.")
+
+    default_tickers = "AAPL, NVDA, TSLA, AMD, MSFT, ASML.AS"
+    scan_input = st.text_area("Voer tickers in (gescheiden door komma's)", default_tickers)
+
+    if st.button("🚀 Start Deep Scan"):
+        tickers_to_scan = [t.strip().upper() for t in scan_input.split(",") if t.strip()]
+        
+        results = []
+        progress_text = "Analyseren..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        for i, ticker in enumerate(tickers_to_scan):
+            # Update de balk met tekst zodat je weet waar hij is
+            my_bar.progress((i) / len(tickers_to_scan), text=f"🔍 Analyseren van {ticker} (Tech + AI + Insiders)...")
             
-    else:
-        st.write("Je portfolio is leeg.")
+            # 1. Technische Data
+            df, metrics = get_zenith_data(ticker)
+            
+            # 2. Insiders & Nieuws (De "Zware" taak)
+            if df is not None:
+                buys, news = get_external_info(ticker) # Dit duurt even!
+                
+                # 3. Bereken de VOLLEDIGE Zenith Score
+                score = 0
+                
+                # A. Markt
+                if metrics['market_bull']: score += 20
+                
+                # B. Trend
+                if metrics['price'] > metrics['sma200']: score += 30
+                
+                # C. RSI
+                if metrics['rsi'] < 30: score += 20
+                elif metrics['rsi'] > 70: pass # Geen punten aftrek in de scanner voor netheid, maar geen bonus
+                else: score += 0
+                
+                # D. Insiders (Nu actief in de scanner!)
+                if buys > 0: score += 20
+                
+                # E. AI Sentiment (Nu actief in de scanner!)
+                pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
+                if pos_news >= 2: score += 10
+                
+                # Sla op
+                results.append({
+                    "Ticker": ticker,
+                    "Prijs": metrics['price'],
+                    "RSI": round(metrics['rsi'], 1),
+                    "Insiders": f"{buys} Buys" if buys > 0 else "-",
+                    "AI Sentiment": f"{pos_news} Positief",
+                    "Totale Score": score
+                })
+        
+        # Klaar!
+        my_bar.progress(1.0, text="Scan Voltooid!")
+        
+        if results:
+            scan_df = pd.DataFrame(results).sort_values(by="Totale Score", ascending=False)
+            st.success(f"✅ Deep Scan voltooid! {len(results)} aandelen volledig doorgelicht.")
+            
+            # Mooie tabel
+            st.dataframe(
+                scan_df,
+                column_config={
+                    "Totale Score": st.column_config.ProgressColumn(
+                        "Zenith Score",
+                        format="%d",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Prijs": st.column_config.NumberColumn(format=f"{curr_symbol}%.2f"),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.error("Geen data gevonden.")
 
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
