@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v14.1", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v14.2", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 if 'portfolio' not in st.session_state:
@@ -51,7 +51,7 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     # 3. Dividend
     div_text = ""
     if fundamentals['dividend'] > 4.0:
-        div_text = f"Het dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
+        div_text = f"Dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
     
     # 4. Scenarios
     if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
@@ -87,31 +87,39 @@ def get_zenith_data(ticker):
         if df.empty: return None, None, None, None
         
         info = stock.info
+        current_p = df['Close'].iloc[-1]
+
+        # --- DE HARDE DIVIDEND FIX ---
+        # We proberen het dollar-bedrag op te halen (dividendRate)
+        # en berekenen het percentage zelf.
+        div_rate = info.get('dividendRate') 
         
-        # --- DIVIDEND AUTO-CORRECTOR (NIEUW) ---
-        raw_div = info.get('dividendYield')
-        if raw_div is None: raw_div = info.get('trailingAnnualDividendYield')
-        
+        # Als rate ontbreekt, probeer trailing rate
+        if div_rate is None:
+            div_rate = info.get('trailingAnnualDividendRate')
+            
         dividend_pct = 0.0
-        if raw_div is not None:
-            # Als Yahoo '0.0002' geeft (voor 0.02%), moeten we *100 doen.
-            # Als Yahoo '0.02' geeft (voor 0.02%), moeten we NIET *100 doen.
-            # We nemen aan: alles onder 0.3 is waarschijnlijk een decimaal -> x100
-            if raw_div < 0.3:
-                dividend_pct = raw_div * 100
-            else:
-                dividend_pct = raw_div
+        
+        if div_rate is not None and current_p > 0:
+            # ZELF BEREKENEN: (Bedrag / Prijs) * 100
+            dividend_pct = (div_rate / current_p) * 100
+        else:
+            # Fallback als dollar-bedrag er niet is: gebruik yield maar voorzichtig
+            raw_div = info.get('dividendYield')
+            if raw_div is not None:
+                # Als het kleiner is dan 0.5 (bv 0.03), doe x100. 
+                # Als het al >0.5 is (bv 5.2), laat het staan.
+                dividend_pct = raw_div * 100 if raw_div < 0.5 else raw_div
 
         fundamentals = {
             "pe": info.get('trailingPE', 0),
             "market_cap": info.get('marketCap', 0),
-            "dividend": dividend_pct,
+            "dividend": dividend_pct, # Nu handmatig berekend!
             "sector": info.get('sector', "Onbekend"),
             "profit_margin": (info.get('profitMargins') or 0) * 100
         }
         
         # Wall Street
-        current_p = df['Close'].iloc[-1]
         target_p = info.get('targetMeanPrice', 0)
         if target_p is None: target_p = 0
         upside = ((target_p - current_p) / current_p) * 100 if target_p > 0 else 0
@@ -188,7 +196,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 
 # ==========================================
-# PAGINA 1: ANALYSE (DASHBOARD MODE)
+# PAGINA 1: ANALYSE (DASHBOARD)
 # ==========================================
 if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
@@ -204,7 +212,6 @@ if page == "🔎 Markt Analyse":
             with st.spinner('Data ophalen en AI analyse draaien...'):
                 buys, news = get_external_info(ticker_input)
             
-            # SCORE
             score = 0
             if metrics['market_bull']: score += 15
             if metrics['price'] > metrics['sma200']: score += 20
@@ -217,7 +224,6 @@ if page == "🔎 Markt Analyse":
             
             thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street)
 
-            # --- TOP METRICS ROW ---
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
             sig_color = "green" if "KOPEN" in signal else "red" if "VERKOPEN" in signal else "off"
@@ -227,9 +233,7 @@ if page == "🔎 Markt Analyse":
 
             st.markdown("---")
 
-            # --- MIDDEN: THESIS (LINKS) & FUNDAMENTEEL (RECHTS) ---
             col_thesis, col_fund = st.columns([2, 1])
-            
             with col_thesis:
                 st.subheader("📝 Zenith AI Thesis")
                 st.info(f"{thesis_text}")
@@ -237,13 +241,11 @@ if page == "🔎 Markt Analyse":
 
             with col_fund:
                 st.subheader("🏢 Fundamenteel")
-                # We maken een mini-tabelletje met metrics
                 st.metric("P/E Ratio", f"{fund['pe']:.2f}")
                 st.metric("Dividend Yield", f"{fund['dividend']:.2f}%")
                 st.metric("Winstmarge", f"{fund['profit_margin']:.1f}%")
                 st.text(f"Sector: {fund['sector']}")
 
-            # --- ONDER: GRAFIEK ---
             st.markdown("---")
             st.subheader("📈 Technische Grafiek")
             end_date = df.index[-1]
@@ -261,11 +263,9 @@ if page == "🔎 Markt Analyse":
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- ONDER: NIEUWS ---
             st.markdown("---")
             st.subheader("📰 Laatste Nieuws")
             if news:
-                # We tonen nieuws in 2 kolommen voor compactheid
                 n_cols = st.columns(2)
                 for i, n in enumerate(news):
                     col = n_cols[i % 2]
