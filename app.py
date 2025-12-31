@@ -8,7 +8,7 @@ from transformers import pipeline
 import feedparser
 import warnings
 import requests
-import time # NIEUW: Nodig voor de vertraging tegen Yahoo blokkades
+import time # Nodig voor de anti-blokkade pauze
 
 # Try-except voor scipy
 try:
@@ -18,7 +18,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v24.0 Stable", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v24.1 Fix", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -183,7 +183,15 @@ def get_zenith_data(ticker):
         
         ent = df['L'].iloc[-1] if not pd.isna(df['L'].iloc[-1]) else cur
         low = df['Low'].tail(50).min(); high = df['High'].tail(50).max()
-        snip = {"entry": ent, "diff": ((cur-ent)/cur)*100, "sl": min(low,ent)*0.98, "tp": high, "rr": (high-ent)/(ent-(min(low,ent)*0.98)) if (ent-(min(low,ent)*0.98))>0 else 0}
+        
+        # --- DE FIX ZIT HIER: JUISTE KEYS GEBRUIKEN ---
+        snip = {
+            "entry_price": ent, # Was 'entry'
+            "current_diff": ((cur-ent)/cur)*100, # Was 'diff'
+            "stop_loss": min(low,ent)*0.98, # Was 'sl'
+            "take_profit": high, # Was 'tp'
+            "rr_ratio": (high-ent)/(ent-(min(low,ent)*0.98)) if (ent-(min(low,ent)*0.98))>0 else 0 # Was 'rr'
+        }
         
         try: 
             m = yf.Ticker("^GSPC").history(period="7y")
@@ -208,7 +216,7 @@ def get_external_info(ticker):
 
 def generate_thesis(met, snip, ws, buys, fund):
     th = []; sig = "NEUTRAAL"
-    upt = met['price']>met['sma200']; zone = snip['diff']<1.5
+    upt = met['price']>met['sma200']; zone = snip['current_diff']<1.5 # Fix key
     val_txt = ""
     if fund['fair_value']:
         if met['price'] < fund['fair_value'] * 0.8: val_txt = "💎 **VALUE:** Aandeel is goedkoop."
@@ -368,14 +376,15 @@ elif page == "📡 Deep Scanner":
         lst = [x.strip().upper() for x in txt.split(',')]
         res = []
         bar = st.progress(0)
-        failed = [] # Nieuw: Hou bij wat faalt
+        failed = [] # Voor debug
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
-            time.sleep(0.2) # ANTI-BLOCK: Vertraging
+            time.sleep(0.2) # Anti-blockkade pauze
             try:
                 df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
                 if df is not None:
                     sc = 0; reasons = []
+                    # HIER IS DE FIX: GEBRUIK 'rr_ratio' (de nieuwe key) ipv 'rr'
                     if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
                     if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
                     if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
@@ -384,6 +393,7 @@ elif page == "📡 Deep Scanner":
                     if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
 
                     adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
+                    
                     res.append({
                         "Ticker": t, 
                         "Prijs": met['price'], 
@@ -393,8 +403,7 @@ elif page == "📡 Deep Scanner":
                         "Advies": adv,
                         "Reden": " + ".join(reasons) if reasons else "-"
                     })
-                else:
-                    failed.append(f"{t}: Geen data")
+                else: failed.append(f"{t}: Geen data")
             except Exception as e:
                 failed.append(f"{t}: {str(e)}")
         
@@ -404,7 +413,7 @@ elif page == "📡 Deep Scanner":
     
     if 'res' in st.session_state:
         if not st.session_state['res']:
-            st.warning("Geen resultaten. Yahoo blokkeert mogelijk de verbinding of de tickers zijn fout.")
+            st.warning("Geen resultaten gevonden. Mogelijke oorzaak: Yahoo blokkade of ongeldige tickers.")
         else:
             df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
             st.dataframe(
@@ -425,7 +434,6 @@ elif page == "📡 Deep Scanner":
                 sel = c1.selectbox("Kies:", options)
                 c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
         
-        # DEBUG INFO TONEN
         if 'failed' in st.session_state and st.session_state['failed']:
             with st.expander("⚠️ Foutrapportage (Debug Info)"):
                 st.write(st.session_state['failed'])
