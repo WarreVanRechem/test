@@ -10,11 +10,20 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v15.0", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v16.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
+# --- SESSION STATE INITIALISATIE ---
 if 'portfolio' not in st.session_state:
     st.session_state['portfolio'] = []
+
+# Zorg dat de navigatie variabele bestaat voor het switchen van pagina's
+if 'nav_page' not in st.session_state:
+    st.session_state['nav_page'] = "🔎 Markt Analyse"
+
+# Zorg dat de geselecteerde ticker variabele bestaat
+if 'selected_ticker' not in st.session_state:
+    st.session_state['selected_ticker'] = "RDW"
 
 @st.cache_resource
 def load_ai():
@@ -89,7 +98,7 @@ def get_zenith_data(ticker):
         info = stock.info
         current_p = df['Close'].iloc[-1]
 
-        # --- DIVIDEND FIX (HARDE BEREKENING) ---
+        # Dividend Fix
         div_rate = info.get('dividendRate') 
         if div_rate is None: div_rate = info.get('trailingAnnualDividendRate')
         dividend_pct = 0.0
@@ -165,7 +174,13 @@ def get_external_info(ticker):
 # --- INTERFACE ---
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.header("Navigatie")
-page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"])
+
+# SLIMME NAVIGATIE: We koppelen de radio button aan de session_state 'nav_page'
+page = st.sidebar.radio(
+    "Ga naar:", 
+    ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"],
+    key="nav_page" 
+)
 
 with st.sidebar.expander("🧮 Risk Calculator"):
     acc_size = st.number_input("Account", value=10000)
@@ -191,14 +206,22 @@ if page == "🔎 Markt Analyse":
     st.title("💎 Zenith Institutional Terminal") 
     
     col_input, col_cap = st.columns(2)
-    with col_input: ticker_input = st.text_input("Ticker", "RDW").upper()
+    # HIER IS DE MAGIE: We vullen de 'value' met de session_state ticker
+    with col_input: 
+        ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
     with col_cap: capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
-    if st.button("Start Deep Analysis"):
+    # We voegen 'OR st.session_state.get('auto_run')' toe om automatisch te starten als je van de scanner komt
+    auto_run = st.session_state.get('auto_run', False)
+    
+    if st.button("Start Deep Analysis") or auto_run:
+        # Zet auto_run direct weer uit om loops te voorkomen
+        if auto_run: st.session_state['auto_run'] = False
+        
         df, metrics, fund, wall_street = get_zenith_data(ticker_input)
         
         if df is not None:
-            with st.spinner('Data ophalen en AI analyse draaien...'):
+            with st.spinner(f'Analyseren van {ticker_input}...'):
                 buys, news = get_external_info(ticker_input)
             
             score = 0
@@ -321,7 +344,7 @@ elif page == "💼 Mijn Portfolio":
     else: st.write("Leeg.")
 
 # ==========================================
-# PAGINA 3: SCANNER (PRO VERSION)
+# PAGINA 3: SCANNER (MET AUTO-LINK)
 # ==========================================
 elif page == "📡 Deep Scanner":
     st.title("📡 Zenith Market Scanner")
@@ -338,39 +361,23 @@ elif page == "📡 Deep Scanner":
             if df is not None:
                 buys, news = get_external_info(ticker)
                 
-                # SCORE + REDENEN OPBOUWEN
                 score = 0
                 reasons = []
-                
-                if metrics['market_bull']: 
-                    score += 15
-                
+                if metrics['market_bull']: score += 15
                 if metrics['price'] > metrics['sma200']: 
-                    score += 20
-                    reasons.append("🚀 Trend")
-                
+                    score += 20; reasons.append("🚀 Trend")
                 if metrics['rsi'] < 30: 
-                    score += 15
-                    reasons.append("📉 Oversold")
-                
+                    score += 15; reasons.append("📉 Oversold")
                 if buys > 0: 
-                    score += 15
-                    reasons.append("🏛️ Insiders")
-                
+                    score += 15; reasons.append("🏛️ Insiders")
                 pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
                 if pos_news >= 2: 
-                    score += 10
-                    reasons.append("🤖 AI Positief")
-                    
+                    score += 10; reasons.append("🤖 AI Positief")
                 if 0 < fund['pe'] < 25: 
-                    score += 10
-                    reasons.append("💰 Goedkoop")
-                    
+                    score += 10; reasons.append("💰 Goedkoop")
                 if ws['upside'] > 10: 
-                    score += 15
-                    reasons.append("💼 Wall St")
+                    score += 15; reasons.append("💼 Wall St")
                 
-                # ADVIES BEPALEN
                 advies = "NEUTRAAL"
                 if score >= 70: advies = "🟢 STERK KOPEN"
                 elif score >= 50: advies = "🟡 KOPEN / HOUDEN"
@@ -380,25 +387,47 @@ elif page == "📡 Deep Scanner":
                     "Ticker": ticker,
                     "Prijs": metrics['price'],
                     "Analist Doel": f"{curr_symbol}{ws['target']:.2f}",
-                    "Upside": f"{ws['upside']:.1f}%",
                     "Score": score,
                     "Advies": advies,
-                    "Reden (Drivers)": " + ".join(reasons) if reasons else "Geen triggers"
+                    "Reden": " + ".join(reasons) if reasons else "Geen triggers"
                 })
         my_bar.progress(1.0, text="Klaar!")
         
-        if results: 
-            # Dataframe tonen met de nieuwe kolommen
-            st.dataframe(
-                pd.DataFrame(results).sort_values(by="Score", ascending=False), 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
-                    "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_symbol}%.2f")
-                }
-            )
-        else: st.error("Geen data.")
+        if results:
+            st.session_state['scan_results'] = results # Bewaar resultaten
+        else:
+            st.error("Geen data.")
+
+    # --- TOON RESULTATEN & ACTIE KNOP ---
+    if 'scan_results' in st.session_state and st.session_state['scan_results']:
+        results = st.session_state['scan_results']
+        
+        # 1. Tabel
+        st.dataframe(
+            pd.DataFrame(results).sort_values(by="Score", ascending=False), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_symbol}%.2f")
+            }
+        )
+
+        st.markdown("---")
+        # 2. Actie Sectie
+        st.subheader("🔍 Wil je een aandeel dieper analyseren?")
+        c1, c2 = st.columns([3, 1])
+        
+        # Keuzemenu gevuld met de tickers uit de resultaten
+        options = [r['Ticker'] for r in results]
+        selected_scan = c1.selectbox("Kies uit de lijst:", options)
+        
+        if c2.button("🚀 Analyseer Nu"):
+            # Update Session State
+            st.session_state['selected_ticker'] = selected_scan # Ticker instellen
+            st.session_state['nav_page'] = "🔎 Markt Analyse" # Pagina switchen
+            st.session_state['auto_run'] = True # Vlaggetje zetten om analyse direct te starten
+            st.rerun() # Herstarten om de switch te forceren
 
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
