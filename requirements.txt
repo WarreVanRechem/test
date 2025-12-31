@@ -10,3 +10,4 @@ scipy
 curl_cffi
 requests
 tabulate
+scipy
