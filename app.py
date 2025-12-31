@@ -8,6 +8,7 @@ from transformers import pipeline
 import feedparser
 import warnings
 import requests
+import time # NIEUW: Nodig voor de vertraging tegen Yahoo blokkades
 
 # Try-except voor scipy
 try:
@@ -17,7 +18,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v23.2 Fix", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v24.0 Stable", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -56,6 +57,7 @@ PRESETS = {
 # --- FUNCTIES ---
 
 def get_smart_peers(ticker, info):
+    if not info: return ["^GSPC"]
     sector = info.get('sector', '').lower(); industry = info.get('industry', '').lower()
     peers = []
     if 'semicon' in industry: peers = ["NVDA", "AMD", "INTC", "TSM", "ASML"]
@@ -226,6 +228,9 @@ with st.sidebar.expander("🧮 Calculator"):
     if stp<ent: st.write(f"**Koop:** {int((acc*(risk/100))/(ent-stp))} stuks")
 curr_sym = "$" if "USD" in st.sidebar.radio("Valuta", ["USD", "EUR"]) else "€"
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+
 st.title("💎 Zenith Institutional Terminal")
 mac = get_macro_data()
 cols = st.columns(5)
@@ -363,10 +368,11 @@ elif page == "📡 Deep Scanner":
         lst = [x.strip().upper() for x in txt.split(',')]
         res = []
         bar = st.progress(0)
+        failed = [] # Nieuw: Hou bij wat faalt
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
+            time.sleep(0.2) # ANTI-BLOCK: Vertraging
             try:
-                # FIX: 9 Variabelen unpacken (met peers)
                 df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
                 if df is not None:
                     sc = 0; reasons = []
@@ -378,7 +384,6 @@ elif page == "📡 Deep Scanner":
                     if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
 
                     adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
-                    
                     res.append({
                         "Ticker": t, 
                         "Prijs": met['price'], 
@@ -388,13 +393,18 @@ elif page == "📡 Deep Scanner":
                         "Advies": adv,
                         "Reden": " + ".join(reasons) if reasons else "-"
                     })
-            except: continue
+                else:
+                    failed.append(f"{t}: Geen data")
+            except Exception as e:
+                failed.append(f"{t}: {str(e)}")
+        
         bar.empty()
         st.session_state['res'] = res
+        st.session_state['failed'] = failed
     
     if 'res' in st.session_state:
         if not st.session_state['res']:
-            st.warning("Geen resultaten. Check tickers of Yahoo Rate Limit.")
+            st.warning("Geen resultaten. Yahoo blokkeert mogelijk de verbinding of de tickers zijn fout.")
         else:
             df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
             st.dataframe(
@@ -407,9 +417,15 @@ elif page == "📡 Deep Scanner":
                 }
             )
             st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
+            
             st.markdown("---")
             c1, c2 = st.columns([3, 1])
             options = [r['Ticker'] for r in st.session_state['res']]
             if options:
                 sel = c1.selectbox("Kies:", options)
                 c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+        
+        # DEBUG INFO TONEN
+        if 'failed' in st.session_state and st.session_state['failed']:
+            with st.expander("⚠️ Foutrapportage (Debug Info)"):
+                st.write(st.session_state['failed'])
