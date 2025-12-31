@@ -11,7 +11,7 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v6.1", layout="wide", page_icon="📈")
+st.set_page_config(page_title="Zenith v6.2", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 @st.cache_resource
@@ -23,7 +23,7 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- DATA & RSI BEREKENING ---
+# --- DATA FETCHING ---
 @st.cache_data(ttl=3600)
 def get_zenith_data(ticker):
     try:
@@ -32,7 +32,7 @@ def get_zenith_data(ticker):
         market = yf.Ticker("^GSPC").history(period="7y")
         if df.empty: return None, None
         
-        # Indicators
+        # Indicator Berekeningen
         df['SMA200'] = df['Close'].rolling(window=200).mean()
         
         # RSI (14)
@@ -43,6 +43,7 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         
         df['Returns'] = df['Close'].pct_change()
+        
         metrics = {
             "price": df['Close'].iloc[-1],
             "sma200": df['SMA200'].iloc[-1],
@@ -62,9 +63,10 @@ def get_external_info(ticker):
         if insider is not None and not insider.empty:
             buys = insider.head(10)[insider.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         
+        # Nieuws met User-Agent fix
         rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+finance&hl=en-US&gl=US&ceid=US:en"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(rss_url, headers=headers, timeout=10)
+        response = requests.get(rss_url, headers=headers, timeout=5)
         feed = feedparser.parse(response.content)
         
         for entry in feed.entries[:5]:
@@ -79,7 +81,9 @@ def get_external_info(ticker):
     return buys, news_results
 
 # --- INTERFACE ---
-st.title("💎 Zenith Institutional Terminal")
+st.title("💎 Zenith Terminal v6.2 (FINAL)") # Check of je dit ziet!
+st.write("Versie controle: RSI Indicator + Pros/Cons Sectie actief.")
+
 ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
 
@@ -87,96 +91,71 @@ if st.sidebar.button("Start Deep Analysis"):
     df, metrics = get_zenith_data(ticker_input)
     
     if df is not None:
-        with st.spinner('Analyse uitvoeren...'):
+        with st.spinner('Bezig met ophalen van nieuws en insiders...'):
             buys, news = get_external_info(ticker_input)
         
-        # --- SCORING LOGICA ---
+        # --- SCORING ---
         score = 0
         pros, cons = [], []
         
-        # 1. Markt context
-        if metrics['market_bull']: 
-            score += 20
-            pros.append("Brede markt (S&P 500) is Bullish")
-        else: 
-            cons.append("Markt-omgeving is Bearish (hoog risico)")
-
-        # 2. Trend (200MA)
-        if metrics['price'] > metrics['sma200']: 
-            score += 30
-            pros.append("Lange-termijn trend is POSITIEF (Boven 200MA)")
-        else: 
-            cons.append("Lange-termijn trend is NEGATIEF (Onder 200MA)")
-
-        # 3. RSI
-        if metrics['rsi'] < 30:
-            score += 20
-            pros.append(f"RSI is EXTREEM LAAG ({metrics['rsi']:.1f}) - Aandeel is technisch goedkoop")
-        elif metrics['rsi'] > 70:
-            cons.append(f"RSI is EXTREEM HOOG ({metrics['rsi']:.1f}) - Risico op correctie")
-        else:
-            pros.append(f"RSI is Neutraal ({metrics['rsi']:.1f})")
-
-        # 4. Insiders
-        if buys > 0:
-            score += 20
-            pros.append(f"INSIDER ALERT: {buys} recente aankopen door directie")
-
-        # 5. Nieuws
+        if metrics['market_bull']: score += 20; pros.append("Markt (S&P500) is Bullish")
+        else: cons.append("Markt is onzeker")
+            
+        if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
+        else: cons.append("Trend is Negatief (< 200MA)")
+            
+        if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f}) - Koopkans?")
+        elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f}) - Te duur?")
+        
+        if buys > 0: score += 20; pros.append(f"Insiders kopen ({buys}x)")
+        
         pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
-        if pos_news >= 2:
-            score += 10
-            pros.append(f"AI Sentiment: {pos_news} positieve koppen gevonden")
+        if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
 
-        # UI: Header Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Zenith Score", f"{score}/100")
-        m2.metric("Huidige Prijs", f"${metrics['price']:.2f}")
-        m3.metric("RSI (14D)", f"{metrics['rsi']:.1f}")
-        m4.metric("VaR (Dagrisico)", f"${abs(metrics['var'] * capital):.0f}")
+        # --- METRICS ---
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Zenith Score", f"{score}/100")
+        c2.metric("Prijs", f"${metrics['price']:.2f}")
+        c3.metric("RSI", f"{metrics['rsi']:.1f}")
+        c4.metric("Risk (VaR)", f"${abs(metrics['var'] * capital):.0f}")
 
-        # --- GRAFIEK SECTIE ---
+        # --- GRAFIEK MET RSI ---
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
 
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                           vertical_spacing=0.05, row_heights=[0.7, 0.3])
-
-        # Koers & 200MA
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+        
+        # Boven: Koers
         fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], 
                                      low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-
-        # RSI
+        
+        # Onder: RSI
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
         fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
         fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
-
-        fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False, margin=dict(l=0, r=0, t=30, b=0))
+        
+        fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- ANALYSE SECTIE (PROS & CONS) ---
-        st.subheader("📝 Deep Dive Analyse")
+        # --- PROS & CONS (ZIJN TERUG!) ---
+        st.subheader("⚖️ De Analyse")
         col_pros, col_cons = st.columns(2)
-        
         with col_pros:
-            st.success("### ✅ Sterke Punten (PROS)")
-            if not pros: st.write("Geen significante sterke punten gevonden.")
-            for p in pros:
-                st.write(f"• {p}")
-        
+            st.success("### ✅ Sterke Punten")
+            if not pros: st.write("Geen sterke punten.")
+            for p in pros: st.write(f"• {p}")
         with col_cons:
-            st.error("### ❌ Risico Factoren (CONS)")
-            if not cons: st.write("Geen directe risico's gedetecteerd.")
-            for c in cons:
-                st.write(f"• {c}")
+            st.error("### ❌ Risico Punten")
+            if not cons: st.write("Geen grote risico's.")
+            for c in cons: st.write(f"• {c}")
 
-        # --- NIEUWS SECTIE ---
-        st.subheader("📰 Recent AI-Geanalyseerd Nieuws")
+        # --- NIEUWS ---
+        st.subheader("📰 Laatste Nieuws")
         for n in news:
-            icon = "🟢" if n['sentiment'] == 'POSITIVE' else "🔴" if n['sentiment'] == 'NEGATIVE' else "⚪"
-            st.markdown(f"{icon} **{n['sentiment']}**: [{n['title']}]({n['link']})")
-
+            color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
+            st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+            
     else:
-        st.error("Data kon niet worden geladen. Probeer een andere ticker.")
+        st.error("Geen data. Probeer over 1 minuut opnieuw.")
