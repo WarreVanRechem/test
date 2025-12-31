@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v17.0 Pro", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v17.1", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -39,8 +39,8 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# --- MACRO DATA FUNCTIE (NIEUW) ---
-@st.cache_data(ttl=600) # Elke 10 min verversen
+# --- MACRO DATA FUNCTIE ---
+@st.cache_data(ttl=600)
 def get_macro_data():
     tickers = {
         "S&P 500": "^GSPC",
@@ -53,7 +53,6 @@ def get_macro_data():
     for name, ticker in tickers.items():
         try:
             t = yf.Ticker(ticker)
-            # Fast info voor snelheid
             price = t.fast_info.last_price
             prev = t.fast_info.previous_close
             change = ((price - prev) / prev) * 100
@@ -62,10 +61,10 @@ def get_macro_data():
             data[name] = (0, 0)
     return data
 
-# --- THESIS ENGINE ---
+# --- THESIS ENGINE (UPDATED) ---
 def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     thesis = []
-    signal_strength = "NEUTRAAL"
+    signal_strength = "NEUTRAAL" # Default
     
     # 1. Technisch
     trend_text = "Technisch Bullish (>200MA)." if metrics['price'] > metrics['sma200'] else "Technisch zwak (<200MA)."
@@ -83,17 +82,26 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     if fundamentals['dividend'] > 4.0:
         div_text = f"Dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
     
-    # 4. Scenarios
-    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
-        thesis.append(f"🔥 **STRONG BUY:** {trend_text} {ws_text} Dubbele bevestiging!")
+    # --- LOGICA UPDATE: IETS SOEPELER ---
+    # Strong Buy
+    if metrics['price'] > metrics['sma200'] and wall_street['upside'] > 10:
+        thesis.append(f"🔥 **STERK:** {trend_text} {ws_text} Fundamentals ondersteunen de groei.")
         signal_strength = "STERK KOPEN"
-    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] > 30:
-        thesis.append(f"⚠️ **OPGELET:** Analisten zijn optimistisch, maar de trend is neerwaarts. Risicovol.")
-        signal_strength = "AFWACHTEN"
+        
+    # Speculative Buy (Oversold)
+    elif metrics['rsi'] < 30:
+        thesis.append(f"🛒 **KOOPKANS:** Het aandeel is zwaar afgestraft (RSI < 30). Mogelijk een goed instapmoment voor een rebound.")
+        signal_strength = "KOOP (DIP)"
+
+    # Sell / Avoid
+    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] < 5:
+        thesis.append(f"⚠️ **OPGELET:** Trend is neerwaarts en analisten zien weinig potentieel.")
+        signal_strength = "AFBLIJVEN / VERKOPEN"
+        
+    # Neutraal (Default)
     else:
-        thesis.append(f"ℹ️ **ANALYSE:** {trend_text} {ws_text} {div_text}")
-        if buys > 0: thesis.append(f"Insiders kochten {buys}x.")
-        if pos_news >= 2: thesis.append("Sentiment is positief.")
+        thesis.append(f"ℹ️ **HOUDEN:** {trend_text} {ws_text} Geen uitgesproken signaal.")
+        if buys > 0: thesis.append(f"Positief: Insiders kochten {buys}x.")
 
     return " ".join(thesis), signal_strength
 
@@ -113,7 +121,7 @@ def get_zenith_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
-        market = yf.Ticker("^GSPC").history(period="7y") # Benchmark ophalen
+        market = yf.Ticker("^GSPC").history(period="7y")
         if df.empty: return None, None, None, None, None
         
         info = stock.info
@@ -158,17 +166,10 @@ def get_zenith_data(ticker):
         df['RSI'] = 100 - (100 / (1 + rs))
         df['Returns'] = df['Close'].pct_change()
         
-        # --- ALPHA BEREKENING (NIEUW) ---
-        # We normaliseren beide naar 100% startpunt om te vergelijken
-        # We nemen de laatste 2 jaar voor de grafiek
+        # Alpha Calc
         start_compare = df.index[-500] if len(df) > 500 else df.index[0]
-        
-        # Zorg dat de market data dezelfde datum range heeft
         market_subset = market.loc[df.index]
-        
-        # Bereken relatieve performance
         df['Rel_Perf'] = df['Close'] / df['Close'].iloc[0]
-        # Sla market data op in df voor makkelijk plotten (vul gaten op)
         df['Market_Perf'] = (market_subset['Close'] / market_subset['Close'].iloc[0]) * df['Close'].iloc[0] 
         
         metrics = {
@@ -180,7 +181,6 @@ def get_zenith_data(ticker):
         }
         return df, metrics, fundamentals, wall_street, market
     except Exception as e: 
-        print(e)
         return None, None, None, None, None
 
 def get_external_info(ticker):
@@ -226,7 +226,7 @@ curr_symbol = "$" if "USD" in currency_mode else "€"
 st.sidebar.markdown("---")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 
-# --- MACRO HEADER (PRO FEATURE) ---
+# --- MACRO HEADER ---
 st.title("💎 Zenith Institutional Terminal") 
 macro = get_macro_data()
 m1, m2, m3, m4, m5 = st.columns(5)
@@ -238,7 +238,7 @@ m5.metric("10Y Rente", f"{macro['10Y Rente'][0]:.2f}%", f"{macro['10Y Rente'][1]
 st.markdown("---")
 
 # ==========================================
-# PAGINA 1: ANALYSE (DASHBOARD)
+# PAGINA 1: ANALYSE
 # ==========================================
 if page == "🔎 Markt Analyse":
     col_input, col_cap = st.columns(2)
@@ -270,7 +270,15 @@ if page == "🔎 Markt Analyse":
 
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
-            sig_color = "green" if "KOPEN" in signal else "red" if "VERKOPEN" in signal else "off"
+            
+            # --- HIER ZIT DE FIX VOOR DE KLEUR ---
+            if "KOPEN" in signal or "KOOP" in signal:
+                sig_color = "green"
+            elif "VERKOPEN" in signal or "AFBLIJVEN" in signal:
+                sig_color = "red"
+            else:
+                sig_color = "orange" # Nu orange ipv off
+            
             c2.markdown(f"**Advies:** :{sig_color}[{signal}]")
             c3.metric("Huidige Prijs", f"{curr_symbol}{metrics['price']:.2f}")
             c4.metric("Analisten Doel", f"{curr_symbol}{wall_street['target']:.2f}", f"{wall_street['upside']:.1f}% Upside")
@@ -289,27 +297,20 @@ if page == "🔎 Markt Analyse":
 
             st.markdown("---")
             st.subheader("📈 Alpha Grafiek (vs S&P 500)")
-            # Plot
             end_date = df.index[-1]
             start_date = end_date - pd.DateOffset(years=2)
             plot_df = df.loc[start_date:end_date]
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
             
-            # 1. Price vs Market (Alpha)
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-            # Benchmark (De Markt) als referentie
-            # We schalen de markt naar de prijs van het aandeel zodat ze op elkaar passen
             scale_factor = plot_df['Close'].iloc[0] / market_data.loc[plot_df.index[0]]['Close']
             scaled_market = market_data.loc[plot_df.index]['Close'] * scale_factor
             fig.add_trace(go.Scatter(x=plot_df.index, y=scaled_market, line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
 
-            # 2. Volume
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
-            
-            # 3. RSI
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=3, col=1)
             fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
@@ -372,8 +373,6 @@ elif page == "💼 Mijn Portfolio":
         
         df_port = pd.DataFrame(portfolio_data)
         st.write(df_port.to_markdown(index=False), unsafe_allow_html=True)
-        
-        # PRO FEATURE: EXPORT KNOP
         st.download_button("📥 Download Portfolio (CSV)", df_port.to_csv(index=False), "portfolio.csv", "text/csv")
         
         tot_profit = total_value - total_cost
@@ -452,7 +451,6 @@ elif page == "📡 Deep Scanner":
                 "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_symbol}%.2f")
             }
         )
-        # PRO FEATURE: EXPORT KNOP
         st.download_button("📥 Download Scan Resultaten (CSV)", df_scan.to_csv(index=False), "scanner_results.csv", "text/csv")
 
         st.markdown("---")
