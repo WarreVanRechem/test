@@ -7,4 +7,4 @@ transformers
 torch
 feedparser
 scipy
-requests
+curl_cffi
