@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from transformers import pipeline
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- CONFIGURATIE ---
 st.set_page_config(page_title="Zenith Terminal", layout="wide", page_icon="📈")
@@ -20,20 +20,20 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- DATA FETCHING ---
+# --- DATA FETCHING (Zonder het Ticker object terug te geven) ---
 @st.cache_data(ttl=3600)
-def get_data(ticker):
+def get_analysis_data(ticker):
     stock = yf.Ticker(ticker)
-    # We halen 7 jaar op om genoeg data te hebben voor een zuivere 200MA over 5 jaar
     df = stock.history(period="7y")
     market = yf.Ticker("^GSPC").history(period="7y")
     
-    if df.empty: return None, None, None
+    if df.empty:
+        return None, None
     
+    # Berekeningen
     df['SMA200'] = df['Close'].rolling(window=200).mean()
     df['Returns'] = df['Close'].pct_change()
     
-    # Metrics berekenen
     downside = df.loc[df['Returns'] < 0, 'Returns']
     sortino = (df['Returns'].mean() * 252) / (downside.std() * np.sqrt(252)) if not downside.empty else 0
     var_95 = np.percentile(df['Returns'].dropna(), 5)
@@ -45,7 +45,21 @@ def get_data(ticker):
         "var": var_95,
         "market_bull": market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
     }
-    return df, metrics, stock
+    # We geven alleen de 'schone' data terug, geen complexe Ticker objecten
+    return df, metrics
+
+def get_insider_info(ticker):
+    """Haalt insider data op zonder caching om fouten te voorkomen."""
+    try:
+        stock = yf.Ticker(ticker)
+        insider = stock.insider_transactions
+        if insider is None or insider.empty: return 0, 0
+        recent = insider.head(20)
+        buys = recent[recent['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
+        sells = recent[recent['Text'].str.contains("Sale", case=False, na=False)].shape[0]
+        return buys, sells
+    except:
+        return 0, 0
 
 # --- INTERFACE ---
 st.title("💎 Zenith Institutional Terminal")
@@ -54,65 +68,44 @@ ticker = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
 capital = st.sidebar.number_input("Inzet Kapitaal ($)", value=10000)
 
 if st.sidebar.button("Start Deep Analysis"):
-    df, metrics, stock = get_data(ticker)
+    df, metrics = get_analysis_data(ticker)
     
     if df is not None:
-        # Score & Tekst (Pros/Cons)
+        buys, sells = get_insider_info(ticker)
+        
+        # Scoring
         score = 0
         pros, cons = [], []
-        if metrics['market_bull']: score += 20; pros.append("Brede markt is Bullish")
+        if metrics['market_bull']: score += 20; pros.append("Markt is Bullish")
         else: cons.append("Markt-omgeving is riskant")
-        if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (Boven 200MA)")
-        else: cons.append("Trend is Negatief (Onder 200MA)")
-        if metrics['sortino'] > 1: score += 20; pros.append("Goede Risk/Reward verhouding")
+        if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
+        else: cons.append("Trend is Negatief (< 200MA)")
+        if buys > sells: score += 20; pros.append(f"Insiders kopen ({buys} tx)")
 
-        # Header stats
+        # Stats
         col1, col2, col3 = st.columns(3)
         col1.metric("Zenith Score", f"{score}/100")
-        col2.metric("Huidige Prijs", f"${metrics['price']:.2f}")
+        col2.metric("Prijs", f"${metrics['price']:.2f}")
         col3.metric("Max Dagverlies (VaR)", f"${abs(metrics['var'] * capital):.0f}")
 
-        # --- GRAFIEK FIX VOOR 5 JAAR ---
-        # We pakken de data van de laatste 5 jaar
+        # --- 5 JAAR GRAFIEK ---
         end_date = df.index[-1]
         start_date = end_date - pd.DateOffset(years=5)
         plot_df = df.loc[start_date:end_date]
 
         fig = go.Figure()
-        # Candlesticks
-        fig.add_trace(go.Candlestick(
-            x=plot_df.index,
-            open=plot_df['Open'],
-            high=plot_df['High'],
-            low=plot_df['Low'],
-            close=plot_df['Close'],
-            name="Prijs"
-        ))
-        # 200 MA (Gele lijn)
-        fig.add_trace(go.Scatter(
-            x=plot_df.index,
-            y=plot_df['SMA200'],
-            line=dict(color='#FFD700', width=2),
-            name="200 MA"
-        ))
+        fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], 
+                                     low=plot_df['Low'], close=plot_df['Close'], name="Prijs"))
+        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"))
 
-        # FIX: Dwing de X-as om exact tussen start_date en end_date te blijven
         fig.update_layout(
-            title=f"Gedetailleerde 5-jaars Analyse: {ticker}",
-            template="plotly_dark",
-            height=600,
-            xaxis=dict(
-                type='date',
-                range=[start_date, end_date], # Forceer het bereik
-                rangeslider=dict(visible=False)
-            ),
+            template="plotly_dark", height=600,
+            xaxis=dict(type='date', range=[start_date, end_date], rangeslider=dict(visible=False)),
             yaxis=dict(autorange=True, fixedrange=False),
             margin=dict(l=0, r=0, t=40, b=0)
         )
-        
         st.plotly_chart(fig, use_container_width=True)
 
-        # Onderste sectie
         c1, c2 = st.columns(2)
         with c1:
             st.success("### Sterke Punten")
@@ -121,4 +114,4 @@ if st.sidebar.button("Start Deep Analysis"):
             st.error("### Risico Factoren")
             for c in cons: st.write(f"❌ {c}")
     else:
-        st.error("Geen data gevonden. Controleer de ticker.")
+        st.error("Geen data gevonden voor deze ticker.")
