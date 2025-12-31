@@ -81,7 +81,7 @@ def get_external_info(ticker):
     return buys, news_results
 
 # --- INTERFACE ---
-st.title("💎 Zenith Terminal v6.2 (FINAL)") # Check of je dit ziet!
+st.title("💎 Zenith Terminal v6.2") # Check of je dit ziet!
 st.write("Versie controle: RSI Indicator + Pros/Cons Sectie actief.")
 
 ticker_input = st.sidebar.text_input("Ticker Symbool", "RDW").upper()
