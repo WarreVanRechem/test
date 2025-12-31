@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v14.2", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v15.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 if 'portfolio' not in st.session_state:
@@ -89,32 +89,21 @@ def get_zenith_data(ticker):
         info = stock.info
         current_p = df['Close'].iloc[-1]
 
-        # --- DE HARDE DIVIDEND FIX ---
-        # We proberen het dollar-bedrag op te halen (dividendRate)
-        # en berekenen het percentage zelf.
+        # --- DIVIDEND FIX (HARDE BEREKENING) ---
         div_rate = info.get('dividendRate') 
-        
-        # Als rate ontbreekt, probeer trailing rate
-        if div_rate is None:
-            div_rate = info.get('trailingAnnualDividendRate')
-            
+        if div_rate is None: div_rate = info.get('trailingAnnualDividendRate')
         dividend_pct = 0.0
-        
         if div_rate is not None and current_p > 0:
-            # ZELF BEREKENEN: (Bedrag / Prijs) * 100
             dividend_pct = (div_rate / current_p) * 100
         else:
-            # Fallback als dollar-bedrag er niet is: gebruik yield maar voorzichtig
             raw_div = info.get('dividendYield')
             if raw_div is not None:
-                # Als het kleiner is dan 0.5 (bv 0.03), doe x100. 
-                # Als het al >0.5 is (bv 5.2), laat het staan.
                 dividend_pct = raw_div * 100 if raw_div < 0.5 else raw_div
 
         fundamentals = {
             "pe": info.get('trailingPE', 0),
             "market_cap": info.get('marketCap', 0),
-            "dividend": dividend_pct, # Nu handmatig berekend!
+            "dividend": dividend_pct, 
             "sector": info.get('sector', "Onbekend"),
             "profit_margin": (info.get('profitMargins') or 0) * 100
         }
@@ -332,7 +321,7 @@ elif page == "💼 Mijn Portfolio":
     else: st.write("Leeg.")
 
 # ==========================================
-# PAGINA 3: SCANNER
+# PAGINA 3: SCANNER (PRO VERSION)
 # ==========================================
 elif page == "📡 Deep Scanner":
     st.title("📡 Zenith Market Scanner")
@@ -348,25 +337,67 @@ elif page == "📡 Deep Scanner":
             df, metrics, fund, ws = get_zenith_data(ticker)
             if df is not None:
                 buys, news = get_external_info(ticker)
+                
+                # SCORE + REDENEN OPBOUWEN
                 score = 0
-                if metrics['market_bull']: score += 15
-                if metrics['price'] > metrics['sma200']: score += 20
-                if metrics['rsi'] < 30: score += 15
-                if buys > 0: score += 15
+                reasons = []
+                
+                if metrics['market_bull']: 
+                    score += 15
+                
+                if metrics['price'] > metrics['sma200']: 
+                    score += 20
+                    reasons.append("🚀 Trend")
+                
+                if metrics['rsi'] < 30: 
+                    score += 15
+                    reasons.append("📉 Oversold")
+                
+                if buys > 0: 
+                    score += 15
+                    reasons.append("🏛️ Insiders")
+                
                 pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
-                if pos_news >= 2: score += 10
-                if 0 < fund['pe'] < 25: score += 10
-                if ws['upside'] > 10: score += 15
+                if pos_news >= 2: 
+                    score += 10
+                    reasons.append("🤖 AI Positief")
+                    
+                if 0 < fund['pe'] < 25: 
+                    score += 10
+                    reasons.append("💰 Goedkoop")
+                    
+                if ws['upside'] > 10: 
+                    score += 15
+                    reasons.append("💼 Wall St")
+                
+                # ADVIES BEPALEN
+                advies = "NEUTRAAL"
+                if score >= 70: advies = "🟢 STERK KOPEN"
+                elif score >= 50: advies = "🟡 KOPEN / HOUDEN"
+                else: advies = "🔴 AFBLIJVEN"
                 
                 results.append({
                     "Ticker": ticker,
                     "Prijs": metrics['price'],
                     "Analist Doel": f"{curr_symbol}{ws['target']:.2f}",
                     "Upside": f"{ws['upside']:.1f}%",
-                    "Score": score
+                    "Score": score,
+                    "Advies": advies,
+                    "Reden (Drivers)": " + ".join(reasons) if reasons else "Geen triggers"
                 })
         my_bar.progress(1.0, text="Klaar!")
-        if results: st.dataframe(pd.DataFrame(results).sort_values(by="Score", ascending=False), use_container_width=True, hide_index=True)
+        
+        if results: 
+            # Dataframe tonen met de nieuwe kolommen
+            st.dataframe(
+                pd.DataFrame(results).sort_values(by="Score", ascending=False), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                    "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_symbol}%.2f")
+                }
+            )
         else: st.error("Geen data.")
 
 st.markdown("---")
