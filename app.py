@@ -11,8 +11,12 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith door Warre V.R.", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v7.0", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
+
+# --- INITIALISEER SESSIE VOOR PORTFOLIO ---
+if 'portfolio' not in st.session_state:
+    st.session_state['portfolio'] = []
 
 @st.cache_resource
 def load_ai():
@@ -23,7 +27,7 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- DATA FETCHING ---
+# --- DATA FUNCTIES ---
 @st.cache_data(ttl=3600)
 def get_zenith_data(ticker):
     try:
@@ -33,13 +37,11 @@ def get_zenith_data(ticker):
         if df.empty: return None, None
         
         df['SMA200'] = df['Close'].rolling(window=200).mean()
-        
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
-        
         df['Returns'] = df['Close'].pct_change()
         
         metrics = {
@@ -77,88 +79,174 @@ def get_external_info(ticker):
     except: pass
     return buys, news_results
 
-# --- INTERFACE ---
+def get_current_price(ticker):
+    """Haalt supersnel alleen de huidige prijs op voor portfolio."""
+    try:
+        data = yf.Ticker(ticker).history(period="1d")
+        if not data.empty:
+            return data['Close'].iloc[-1]
+    except: pass
+    return 0.0
 
-# 1. DISCLAIMER IN SIDEBAR (BOVENAAN)
-st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Alleen voor educatief gebruik.")
+# --- SIDEBAR NAVIGATIE ---
+st.sidebar.header("Navigatie")
+page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio"])
 
-st.sidebar.header("Instellingen")
-currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
+st.sidebar.markdown("---")
+# Valuta Instelling (Geldt voor de hele app)
+currency_mode = st.sidebar.radio("Valuta Weergave", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
 
-ticker_input = st.sidebar.text_input("Ticker", "RDW").upper()
-capital = st.sidebar.number_input(f"Kapitaal ({curr_symbol})", value=10000)
-run_btn = st.sidebar.button("Start Deep Analysis")
-
+# Credits
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Credits")
 st.sidebar.markdown("Created by **Warre Van Rechem**")
 st.sidebar.markdown("[Connect on LinkedIn](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 
-# --- HOOFDSCHERM ---
-st.title("💎 Zenith Institutional Terminal v6.7") 
+# ==========================================
+# PAGINA 1: MARKT ANALYSE (DE OUDE TOOL)
+# ==========================================
+if page == "🔎 Markt Analyse":
+    st.title("💎 Zenith Institutional Terminal") 
+    st.warning("⚠️ **Wettelijke Disclaimer:** Deze analyse is gebaseerd op AI en historische data. Doe altijd uw eigen onderzoek.")
 
-# 2. DISCLAIMER OP HOOFDPAGINA
-st.warning("⚠️ **Wettelijke Disclaimer:** Deze applicatie en de gegenereerde signalen zijn uitsluitend bedoeld voor educatieve doeleinden. De maker (Warre Van Rechem) geeft **géén financieel advies**. Beleggen kent risico's.")
-
-if run_btn:
-    df, metrics = get_zenith_data(ticker_input)
+    col_input, col_cap = st.columns(2)
+    with col_input:
+        ticker_input = st.text_input("Ticker Symbool", "RDW").upper()
+    with col_cap:
+        capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
-    if df is not None:
-        with st.spinner('Bezig met analyseren...'):
-            buys, news = get_external_info(ticker_input)
+    if st.button("Start Deep Analysis"):
+        df, metrics = get_zenith_data(ticker_input)
         
-        score = 0
-        pros, cons = [], []
-        
-        if metrics['market_bull']: score += 20; pros.append("Markt (S&P500) is Bullish")
-        else: cons.append("Markt is onzeker")
+        if df is not None:
+            with st.spinner('Analyseren...'):
+                buys, news = get_external_info(ticker_input)
             
-        if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
-        else: cons.append("Trend is Negatief (< 200MA)")
+            # Scoring
+            score = 0
+            pros, cons = [], []
+            if metrics['market_bull']: score += 20; pros.append("Markt (S&P500) is Bullish")
+            else: cons.append("Markt is onzeker")
+            if metrics['price'] > metrics['sma200']: score += 30; pros.append("Trend is Positief (> 200MA)")
+            else: cons.append("Trend is Negatief (< 200MA)")
+            if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f})")
+            elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f})")
+            if buys > 0: score += 20; pros.append(f"Insiders kopen ({buys}x)")
+            pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
+            if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
+
+            # Metrics
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Zenith Score", f"{score}/100")
+            c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
+            c3.metric("RSI", f"{metrics['rsi']:.1f}")
+            c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
+
+            # Grafiek
+            end_date = df.index[-1]
+            start_date = end_date - pd.DateOffset(years=5)
+            plot_df = df.loc[start_date:end_date]
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
+            fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
+            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Pros/Cons & Nieuws
+            c_pros, c_cons = st.columns(2)
+            with c_pros:
+                st.success("### ✅ Sterke Punten")
+                for p in pros: st.write(f"• {p}")
+            with c_cons:
+                st.error("### ❌ Risico Punten")
+                for c in cons: st.write(f"• {c}")
+                
+            st.subheader("📰 Laatste Nieuws")
+            for n in news:
+                color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
+                st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+        else:
+            st.error("Geen data gevonden.")
+
+# ==========================================
+# PAGINA 2: MIJN PORTFOLIO (NIEUW)
+# ==========================================
+elif page == "💼 Mijn Portfolio":
+    st.title("💼 Mijn Portfolio Manager")
+    st.info("Voeg hier je aandelen toe om je totale waarde en winst/verlies te volgen.")
+
+    # INPUT SECTIE
+    with st.expander("➕ Aandeel Toevoegen", expanded=True):
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        with c1: p_ticker = st.text_input("Ticker (bv. AAPL)", key="p_ticker").upper()
+        with c2: p_amount = st.number_input("Aantal", min_value=0.01, step=1.0, key="p_amount")
+        with c3: p_avg = st.number_input(f"Gem. Aankoopprijs ({curr_symbol})", min_value=0.0, step=0.1, key="p_avg")
+        with c4:
+            st.write("") # Spacing
+            st.write("") 
+            if st.button("Toevoegen"):
+                if p_ticker and p_amount > 0:
+                    # Toevoegen aan sessie
+                    st.session_state['portfolio'].append({
+                        "Ticker": p_ticker,
+                        "Aantal": p_amount,
+                        "Koopprijs": p_avg
+                    })
+                    st.success(f"{p_ticker} toegevoegd!")
+                    st.rerun()
+
+    # PORTFOLIO OVERZICHT
+    if len(st.session_state['portfolio']) > 0:
+        st.markdown("---")
+        portfolio_data = []
+        total_value = 0
+        total_cost = 0
+
+        # Loop door opgeslagen aandelen
+        for item in st.session_state['portfolio']:
+            current_price = get_current_price(item['Ticker'])
+            cur_val = current_price * item['Aantal']
+            cost_val = item['Koopprijs'] * item['Aantal']
             
-        if metrics['rsi'] < 30: score += 20; pros.append(f"RSI is Oversold ({metrics['rsi']:.1f})")
-        elif metrics['rsi'] > 70: cons.append(f"RSI is Overbought ({metrics['rsi']:.1f})")
+            total_value += cur_val
+            total_cost += cost_val
+            
+            profit_loss = cur_val - cost_val
+            profit_pct = ((current_price - item['Koopprijs']) / item['Koopprijs']) * 100 if item['Koopprijs'] > 0 else 0
+
+            portfolio_data.append({
+                "Ticker": item['Ticker'],
+                "Aantal": item['Aantal'],
+                "Koopprijs": f"{curr_symbol}{item['Koopprijs']:.2f}",
+                "Huidige Prijs": f"{curr_symbol}{current_price:.2f}",
+                "Waarde": f"{curr_symbol}{cur_val:.2f}",
+                "Winst/Verlies": f"{curr_symbol}{profit_loss:.2f} ({profit_pct:.1f}%)"
+            })
+
+        # Toon Tabel
+        st.table(pd.DataFrame(portfolio_data))
+
+        # Totaal Metrics
+        tot_profit = total_value - total_cost
+        tot_profit_pct = (tot_profit / total_cost) * 100 if total_cost > 0 else 0
         
-        if buys > 0: score += 20; pros.append(f"Insiders kopen ({buys}x)")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Totale Waarde", f"{curr_symbol}{total_value:.2f}")
+        m2.metric("Totale Inleg", f"{curr_symbol}{total_cost:.2f}")
+        m3.metric("Totaal Winst/Verlies", f"{curr_symbol}{tot_profit:.2f}", f"{tot_profit_pct:.1f}%")
         
-        pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
-        if pos_news >= 2: score += 10; pros.append("Positief nieuws sentiment")
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Zenith Score", f"{score}/100")
-        c2.metric("Prijs", f"{curr_symbol}{metrics['price']:.2f}")
-        c3.metric("RSI", f"{metrics['rsi']:.1f}")
-        c4.metric("Risk (VaR)", f"{curr_symbol}{abs(metrics['var'] * capital):.0f}")
-
-        end_date = df.index[-1]
-        start_date = end_date - pd.DateOffset(years=5)
-        plot_df = df.loc[start_date:end_date]
-
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-        fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB', width=2), name="RSI"), row=2, col=1)
-        fig.add_hline(y=70, line_dash="dot", line_color="red", row=2, col=1)
-        fig.add_hline(y=30, line_dash="dot", line_color="green", row=2, col=1)
-        fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("⚖️ De Analyse")
-        col_pros, col_cons = st.columns(2)
-        with col_pros:
-            st.success("### ✅ Sterke Punten")
-            for p in pros: st.write(f"• {p}")
-        with col_cons:
-            st.error("### ❌ Risico Punten")
-            for c in cons: st.write(f"• {c}")
-
-        st.subheader("📰 Laatste Nieuws")
-        for n in news:
-            color = "green" if n['sentiment'] == 'POSITIVE' else "red" if n['sentiment'] == 'NEGATIVE' else "gray"
-            st.markdown(f":{color}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+        # Reset Knop
+        if st.button("🗑️ Portfolio Wissen"):
+            st.session_state['portfolio'] = []
+            st.rerun()
+            
     else:
-        st.error("Geen data.")
+        st.write("Je portfolio is nog leeg. Voeg hierboven een aandeel toe.")
 
 st.markdown("---")
 st.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
