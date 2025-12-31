@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v18.0 Sniper", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v18.1 Sniper", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -64,23 +64,25 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street, 
     # 1. Technisch
     trend_text = "Trend is Bullish 🟢" if metrics['price'] > metrics['sma200'] else "Trend is Bearish 🔴"
     
-    # 2. Sniper Logic (NIEUW)
-    sniper_text = ""
-    if metrics['price'] <= sniper['lower_band'] * 1.02: # Binnen 2% van lower band
-        sniper_text = "🎯 **PERFECTE TIMING:** De prijs raakt de 'Lower Bollinger Band'. Statistisch gezien is de kans op een rebound hier het grootst."
-    elif metrics['price'] >= sniper['upper_band'] * 0.98:
-        sniper_text = "🛑 **WAARSCHUWING:** De prijs raakt de 'Upper Bollinger Band'. Kans op correctie is groot."
+    # 2. Sniper Logic
+    # We kijken nu naar de afstand tot de entry
+    dist_to_entry = ((metrics['price'] - sniper['entry_price']) / metrics['price']) * 100
     
-    # 3. Confluence (Samenloop)
-    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 40 and wall_street['upside'] > 15:
-        thesis.append(f"🔥 **SNIPER BUY:** {trend_text}. {sniper_text} RSI is laag ({metrics['rsi']:.0f}) en analisten zien {wall_street['upside']:.0f}% upside.")
+    sniper_text = ""
+    if dist_to_entry < 1.5: # Minder dan 1.5% verwijderd van de ideale entry
+        sniper_text = "🎯 **PERFECTE TIMING:** De prijs ligt in de 'Kill Zone' (Lower Band). Nu instappen."
+    elif dist_to_entry > 5:
+        sniper_text = f"⏳ **GEDULD:** De prijs is nog {dist_to_entry:.1f}% verwijderd van de ideale entry (Lower Band). Wacht op de dip."
+    
+    # 3. Confluence
+    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
+        thesis.append(f"🔥 **SNIPER BUY:** {trend_text}. {sniper_text} Fundamentals en Wall St. zijn akkoord.")
         signal_strength = "STERK KOPEN"
     elif metrics['price'] < metrics['sma200']:
-        thesis.append(f"⚠️ **AFWACHTEN:** {trend_text}. Hoewel goedkoop, vang geen vallend mes.")
+        thesis.append(f"⚠️ **AFWACHTEN:** {trend_text}. Vang geen vallend mes, wacht tot de trend draait.")
         signal_strength = "AFBLIJVEN"
     else:
         thesis.append(f"ℹ️ **ANALYSE:** {trend_text}. {sniper_text}")
-        if pos_news >= 2: thesis.append("Nieuws is positief.")
 
     return " ".join(thesis), signal_strength
 
@@ -126,57 +128,63 @@ def get_zenith_data(ticker):
 
         # Indicators
         df['SMA200'] = df['Close'].rolling(window=200).mean()
+        df['SMA20'] = df['Close'].rolling(window=20).mean()
+        df['StdDev'] = df['Close'].rolling(window=20).std()
+        df['Upper'] = df['SMA20'] + (df['StdDev'] * 2)
+        df['Lower'] = df['SMA20'] - (df['StdDev'] * 2)
+        
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # --- SNIPER CALCULATIONS (NIEUW) ---
-        # 1. Bollinger Bands (Volatiliteit)
-        df['SMA20'] = df['Close'].rolling(window=20).mean()
-        df['StdDev'] = df['Close'].rolling(window=20).std()
-        df['Upper'] = df['SMA20'] + (df['StdDev'] * 2)
-        df['Lower'] = df['SMA20'] - (df['StdDev'] * 2)
+        # --- SNIPER CALCULATIONS 2.0 (CORRECTED) ---
+        # Entry is NIET current price, maar Lower Band (Support)
+        optimal_entry = df['Lower'].iloc[-1]
         
-        # 2. Support / Resistance (Simpel: Laagste/Hoogste punt van laatste 50 dagen)
+        # Support/Resistance
         recent_low = df['Low'].tail(50).min()
         recent_high = df['High'].tail(50).max()
         
-        # 3. Risk/Reward Ratio
-        # Stop loss net onder de recente low
-        stop_loss = recent_low * 0.98 
-        # Target net onder de recente high
+        # Stop loss net onder de recente low (of onder entry als low hoger is)
+        stop_loss = min(recent_low, optimal_entry) * 0.98 
         target_profit = recent_high
         
-        risk = current_p - stop_loss
-        reward = target_profit - current_p
+        # Risk/Reward berekend vanaf de OPTIMAL ENTRY (niet current price)
+        risk = optimal_entry - stop_loss
+        reward = target_profit - optimal_entry
         rr_ratio = reward / risk if risk > 0 else 0
 
         sniper_metrics = {
-            "lower_band": df['Lower'].iloc[-1],
+            "entry_price": optimal_entry, # DIT IS DE FIX
+            "current_diff": ((current_p - optimal_entry)/current_p) * 100, # Hoeveel % moeten we nog zakken?
             "upper_band": df['Upper'].iloc[-1],
             "support": recent_low,
-            "resistance": recent_high,
             "stop_loss": stop_loss,
             "take_profit": target_profit,
             "rr_ratio": rr_ratio
         }
 
-        # Alpha Calc
+        # Market Context
         try:
             if not market.empty:
                 market_aligned = market['Close'].reindex(df.index, method='nearest')
                 df['Market_Perf'] = (market_aligned / market_aligned.iloc[0]) * df['Close'].iloc[0]
-            else: df['Market_Perf'] = df['Close']
-        except: df['Market_Perf'] = df['Close']
+                market_bull = market['Close'].iloc[-1] > market['Close'].rolling(200).mean().iloc[-1]
+            else: 
+                df['Market_Perf'] = df['Close']
+                market_bull = True
+        except: 
+            df['Market_Perf'] = df['Close']
+            market_bull = True
 
         metrics = {
             "name": long_name,
             "price": current_p,
             "sma200": df['SMA200'].iloc[-1],
             "rsi": df['RSI'].iloc[-1],
-            "market_bull": True, # Simplificatie
+            "market_bull": market_bull,
             "var": np.percentile(df['Close'].pct_change().dropna(), 5)
         }
         return df, metrics, fundamentals, wall_street, market, sniper_metrics
@@ -256,14 +264,14 @@ if page == "🔎 Markt Analyse":
             
             score = 0
             if metrics['price'] > metrics['sma200']: score += 25
-            if metrics['rsi'] < 35: score += 20 # Strenger voor Sniper
+            if metrics['rsi'] < 35: score += 20 
             elif metrics['rsi'] > 70: score -= 10
             if buys > 0: score += 15
             pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
             if pos_news >= 2: score += 10
             if 0 < fund['pe'] < 25: score += 10
             if wall_street['upside'] > 10: score += 15
-            if sniper['rr_ratio'] > 2: score += 10 # Bonus voor goede Risk/Reward
+            if sniper['rr_ratio'] > 2: score += 10 
             
             thesis_text, signal = generate_thesis(ticker_input, metrics, buys, pos_news, fund, wall_street, sniper)
             
@@ -280,19 +288,25 @@ if page == "🔎 Markt Analyse":
 
             st.markdown("---")
             
-            # --- SNIPER SETUP SECTIE (NIEUW) ---
-            st.subheader("🎯 Sniper Entry Setup (De Wiskunde)")
+            # --- SNIPER SETUP SECTIE (DISPLAY FIX) ---
+            st.subheader("🎯 Sniper Entry Setup")
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{metrics['price']:.2f}", help="De huidige marktprijs.")
-            s2.metric("2. Waar eruit als fout? (Stop Loss)", f"{curr_symbol}{sniper['stop_loss']:.2f}", help="Net onder de recente support (bodem).")
-            s3.metric("3. Waar winst pakken? (Target)", f"{curr_symbol}{sniper['take_profit']:.2f}", help="Bij de recente weerstand (plafond).")
+            
+            # Slimme Entry Weergave
+            if sniper['current_diff'] < 1.0: # Minder dan 1% verschil
+                s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{sniper['entry_price']:.2f}", "✅ NU KOPEN!")
+            else:
+                s1.metric("1. Waar kopen? (Entry)", f"{curr_symbol}{sniper['entry_price']:.2f}", f"Wacht (-{sniper['current_diff']:.1f}%)")
+                
+            s2.metric("2. Stop Loss", f"{curr_symbol}{sniper['stop_loss']:.2f}", "Max Verlies")
+            s3.metric("3. Take Profit", f"{curr_symbol}{sniper['take_profit']:.2f}", "Doelwit")
             
             rr_color = "green" if sniper['rr_ratio'] >= 2 else "orange" if sniper['rr_ratio'] >= 1.5 else "red"
             s4.markdown(f"**4. Risk/Reward:** :{rr_color}[**1 : {sniper['rr_ratio']:.1f}**]")
             if sniper['rr_ratio'] < 2:
-                st.caption("⚠️ *Let op: De potentiële winst is kleiner dan 2x je risico. Professionele beleggers slaan dit vaak over.*")
+                st.caption("⚠️ *Ratio < 2. Wachten op lagere prijs voor betere R/R.*")
             else:
-                st.caption("✅ *Goede setup: Je kunt 2x zoveel winnen als verliezen.*")
+                st.caption("✅ *Goede setup!*")
             st.markdown("---")
 
             col_thesis, col_fund = st.columns([2, 1])
@@ -309,20 +323,14 @@ if page == "🔎 Markt Analyse":
             st.subheader("📈 Bollinger Bands (Timing)")
             
             end_date = df.index[-1]
-            start_date = end_date - pd.DateOffset(years=1) # 1 jaar is beter voor detail
+            start_date = end_date - pd.DateOffset(years=1) 
             plot_df = df.loc[start_date:end_date]
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
             
-            # BOLLINGER BANDS
-            # 1. Lower Band (Steun)
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Lower'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name="Lower Band"), row=1, col=1)
-            # 2. Upper Band (Weerstand) - fill='tonexty' vult de ruimte tussen lower en upper
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Lower'], line=dict(color='rgba(0, 255, 0, 0.3)', width=1), name="Lower Band (Buy)"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Upper'], line=dict(color='rgba(255, 0, 0, 0.3)', width=1), fill='tonexty', fillcolor='rgba(128, 128, 128, 0.1)', name="Upper Band"), row=1, col=1)
-            # 3. SMA 20 (Midden)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA20'], line=dict(color='gray', width=1, dash='dot'), name="Midden (20MA)"), row=1, col=1)
-            
-            # 4. Candlesticks
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
 
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
@@ -416,7 +424,6 @@ elif page == "📡 Deep Scanner":
         my_bar = st.progress(0, text="Starten...")
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
-            
             try:
                 df, metrics, fund, ws, _, sniper = get_zenith_data(ticker)
                 if df is not None:
@@ -424,6 +431,7 @@ elif page == "📡 Deep Scanner":
                     
                     score = 0
                     reasons = []
+                    if metrics['market_bull']: score += 15
                     if metrics['price'] > metrics['sma200']: 
                         score += 20; reasons.append("🚀 Trend")
                     if metrics['rsi'] < 30: 
