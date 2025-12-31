@@ -10,7 +10,7 @@ import warnings
 import requests
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v17.1", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v17.2", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- SESSION STATE ---
@@ -32,9 +32,11 @@ def load_ai():
 
 ai_pipe = load_ai()
 
+# --- GEUPDATE PRESETS (CORRECTE TICKERS) ---
 PRESETS = {
     "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR",
-    "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BES.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR",
+    # BELANGRIJK: Solvay is gesplitst in SYENS.BR en SOLB.BR. BES.AS heet soms BESI.AS.
+    "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BESI.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR, INGA.AS",
     "🚀 High Growth": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN",
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
@@ -61,10 +63,10 @@ def get_macro_data():
             data[name] = (0, 0)
     return data
 
-# --- THESIS ENGINE (UPDATED) ---
+# --- THESIS ENGINE ---
 def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     thesis = []
-    signal_strength = "NEUTRAAL" # Default
+    signal_strength = "NEUTRAAL"
     
     # 1. Technisch
     trend_text = "Technisch Bullish (>200MA)." if metrics['price'] > metrics['sma200'] else "Technisch zwak (<200MA)."
@@ -82,26 +84,17 @@ def generate_thesis(ticker, metrics, buys, pos_news, fundamentals, wall_street):
     if fundamentals['dividend'] > 4.0:
         div_text = f"Dividendrendement is aantrekkelijk ({fundamentals['dividend']:.2f}%)."
     
-    # --- LOGICA UPDATE: IETS SOEPELER ---
-    # Strong Buy
-    if metrics['price'] > metrics['sma200'] and wall_street['upside'] > 10:
-        thesis.append(f"🔥 **STERK:** {trend_text} {ws_text} Fundamentals ondersteunen de groei.")
+    # 4. Scenarios
+    if metrics['price'] > metrics['sma200'] and metrics['rsi'] < 45 and wall_street['upside'] > 15:
+        thesis.append(f"🔥 **STRONG BUY:** {trend_text} {ws_text} Dubbele bevestiging!")
         signal_strength = "STERK KOPEN"
-        
-    # Speculative Buy (Oversold)
-    elif metrics['rsi'] < 30:
-        thesis.append(f"🛒 **KOOPKANS:** Het aandeel is zwaar afgestraft (RSI < 30). Mogelijk een goed instapmoment voor een rebound.")
-        signal_strength = "KOOP (DIP)"
-
-    # Sell / Avoid
-    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] < 5:
-        thesis.append(f"⚠️ **OPGELET:** Trend is neerwaarts en analisten zien weinig potentieel.")
-        signal_strength = "AFBLIJVEN / VERKOPEN"
-        
-    # Neutraal (Default)
+    elif metrics['price'] < metrics['sma200'] and wall_street['upside'] > 30:
+        thesis.append(f"⚠️ **OPGELET:** Analisten zijn optimistisch, maar de trend is neerwaarts. Risicovol.")
+        signal_strength = "AFWACHTEN"
     else:
-        thesis.append(f"ℹ️ **HOUDEN:** {trend_text} {ws_text} Geen uitgesproken signaal.")
-        if buys > 0: thesis.append(f"Positief: Insiders kochten {buys}x.")
+        thesis.append(f"ℹ️ **ANALYSE:** {trend_text} {ws_text} {div_text}")
+        if buys > 0: thesis.append(f"Insiders kochten {buys}x.")
+        if pos_news >= 2: thesis.append("Sentiment is positief.")
 
     return " ".join(thesis), signal_strength
 
@@ -242,7 +235,8 @@ st.markdown("---")
 # ==========================================
 if page == "🔎 Markt Analyse":
     col_input, col_cap = st.columns(2)
-    with col_input: ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
+    with col_input: 
+        ticker_input = st.text_input("Ticker", value=st.session_state['selected_ticker']).upper()
     with col_cap: capital = st.number_input(f"Virtueel Kapitaal ({curr_symbol})", value=10000)
     
     auto_run = st.session_state.get('auto_run', False)
@@ -271,13 +265,10 @@ if page == "🔎 Markt Analyse":
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Zenith Score", f"{score}/100")
             
-            # --- HIER ZIT DE FIX VOOR DE KLEUR ---
-            if "KOPEN" in signal or "KOOP" in signal:
-                sig_color = "green"
-            elif "VERKOPEN" in signal or "AFBLIJVEN" in signal:
-                sig_color = "red"
-            else:
-                sig_color = "orange" # Nu orange ipv off
+            # Color Fix
+            if "KOPEN" in signal or "KOOP" in signal: sig_color = "green"
+            elif "VERKOPEN" in signal or "AFBLIJVEN" in signal: sig_color = "red"
+            else: sig_color = "orange"
             
             c2.markdown(f"**Advies:** :{sig_color}[{signal}]")
             c3.metric("Huidige Prijs", f"{curr_symbol}{metrics['price']:.2f}")
@@ -305,9 +296,12 @@ if page == "🔎 Markt Analyse":
             
             fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
             fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700', width=2), name="200 MA"), row=1, col=1)
-            scale_factor = plot_df['Close'].iloc[0] / market_data.loc[plot_df.index[0]]['Close']
-            scaled_market = market_data.loc[plot_df.index]['Close'] * scale_factor
-            fig.add_trace(go.Scatter(x=plot_df.index, y=scaled_market, line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
+            
+            # Market Ref
+            if market_data is not None:
+                scale_factor = plot_df['Close'].iloc[0] / market_data.loc[plot_df.index[0]]['Close']
+                scaled_market = market_data.loc[plot_df.index]['Close'] * scale_factor
+                fig.add_trace(go.Scatter(x=plot_df.index, y=scaled_market, line=dict(color='gray', width=1, dash='dot'), name="S&P 500 (Ref)"), row=1, col=1)
 
             colors = ['green' if r['Open'] < r['Close'] else 'red' for i, r in plot_df.iterrows()]
             fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
@@ -400,43 +394,49 @@ elif page == "📡 Deep Scanner":
         my_bar = st.progress(0, text="Starten...")
         for i, ticker in enumerate(tickers):
             my_bar.progress((i)/len(tickers), text=f"🔍 {ticker}...")
-            df, metrics, fund, ws, _ = get_zenith_data(ticker)
-            if df is not None:
-                buys, news = get_external_info(ticker)
-                
-                score = 0
-                reasons = []
-                if metrics['market_bull']: score += 15
-                if metrics['price'] > metrics['sma200']: 
-                    score += 20; reasons.append("🚀 Trend")
-                if metrics['rsi'] < 30: 
-                    score += 15; reasons.append("📉 Oversold")
-                if buys > 0: 
-                    score += 15; reasons.append("🏛️ Insiders")
-                pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
-                if pos_news >= 2: 
-                    score += 10; reasons.append("🤖 AI Positief")
-                if 0 < fund['pe'] < 25: 
-                    score += 10; reasons.append("💰 Goedkoop")
-                if ws['upside'] > 10: 
-                    score += 15; reasons.append("💼 Wall St")
-                
-                advies = "NEUTRAAL"
-                if score >= 70: advies = "🟢 STERK KOPEN"
-                elif score >= 50: advies = "🟡 KOPEN / HOUDEN"
-                else: advies = "🔴 AFBLIJVEN"
-                
-                results.append({
-                    "Ticker": ticker,
-                    "Prijs": metrics['price'],
-                    "Analist Doel": f"{curr_symbol}{ws['target']:.2f}",
-                    "Score": score,
-                    "Advies": advies,
-                    "Reden": " + ".join(reasons) if reasons else "Geen triggers"
-                })
+            
+            # VEILIGHEID: Try/Except blok in de loop zodat 1 fout aandeel de rest niet stopt
+            try:
+                df, metrics, fund, ws, _ = get_zenith_data(ticker)
+                if df is not None:
+                    buys, news = get_external_info(ticker)
+                    
+                    score = 0
+                    reasons = []
+                    if metrics['market_bull']: score += 15
+                    if metrics['price'] > metrics['sma200']: 
+                        score += 20; reasons.append("🚀 Trend")
+                    if metrics['rsi'] < 30: 
+                        score += 15; reasons.append("📉 Oversold")
+                    if buys > 0: 
+                        score += 15; reasons.append("🏛️ Insiders")
+                    pos_news = sum(1 for n in news if n['sentiment'] == 'POSITIVE')
+                    if pos_news >= 2: 
+                        score += 10; reasons.append("🤖 AI Positief")
+                    if 0 < fund['pe'] < 25: 
+                        score += 10; reasons.append("💰 Goedkoop")
+                    if ws['upside'] > 10: 
+                        score += 15; reasons.append("💼 Wall St")
+                    
+                    advies = "NEUTRAAL"
+                    if score >= 70: advies = "🟢 STERK KOPEN"
+                    elif score >= 50: advies = "🟡 KOPEN / HOUDEN"
+                    else: advies = "🔴 AFBLIJVEN"
+                    
+                    results.append({
+                        "Ticker": ticker,
+                        "Prijs": metrics['price'],
+                        "Analist Doel": f"{curr_symbol}{ws['target']:.2f}",
+                        "Score": score,
+                        "Advies": advies,
+                        "Reden": " + ".join(reasons) if reasons else "Geen triggers"
+                    })
+            except:
+                continue # Als ticker faalt, ga door naar de volgende
+
         my_bar.progress(1.0, text="Klaar!")
         if results: st.session_state['scan_results'] = results 
-        else: st.error("Geen data.")
+        else: st.error("Geen data gevonden. Check de tickers.")
 
     if 'scan_results' in st.session_state and st.session_state['scan_results']:
         results = st.session_state['scan_results']
