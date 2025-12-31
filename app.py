@@ -17,8 +17,11 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v22.1 Hotfix", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v22.2", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
+
+# --- DISCLAIMER (HERSTELD) ---
+st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Deze tool is uitsluitend bedoeld voor educatief gebruik en onderzoek.")
 
 # --- SESSION STATE ---
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
@@ -146,7 +149,6 @@ def get_macro_data():
 def get_zenith_data(ticker):
     try:
         s = yf.Ticker(ticker); df = s.history(period="7y"); i = s.info
-        # ERROR RETURN (8 waarden)
         if df.empty: return None, None, None, None, None, None, None, "Geen data"
         cur = df['Close'].iloc[-1]
         
@@ -174,12 +176,9 @@ def get_zenith_data(ticker):
         except: df['M']=df['Close']; mb=True
         
         met = {"name": i.get('longName', ticker), "price": cur, "sma200": df['SMA200'].iloc[-1], "rsi": df['RSI'].iloc[-1], "bull": mb}
-        
-        # SUCCESS RETURN (NU OOK 8 WAARDEN!)
         return df, met, fund, ws, None, snip, None, None
         
     except Exception as e: 
-        # EXCEPTION RETURN (8 waarden)
         return None, None, None, None, None, None, None, str(e)
 
 def get_external_info(ticker):
@@ -214,6 +213,10 @@ with st.sidebar.expander("🧮 Calculator"):
     if stp<ent: st.write(f"**Koop:** {int((acc*(risk/100))/(ent-stp))} stuks")
 curr_sym = "$" if "USD" in st.sidebar.radio("Valuta", ["USD", "EUR"]) else "€"
 
+# --- CREDITS (HERSTELD) ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("© 2025 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+
 st.title("💎 Zenith Institutional Terminal")
 mac = get_macro_data()
 cols = st.columns(5)
@@ -230,7 +233,6 @@ if page == "🔎 Markt Analyse":
     if st.button("Start Deep Analysis"): st.session_state['analysis_active'] = True; st.session_state['selected_ticker'] = tick
     
     if st.session_state['analysis_active']:
-        # DE FIX: Nu komen er netjes 8 variabelen terug
         df, met, fund, ws, _, snip, _, err = get_zenith_data(st.session_state['selected_ticker'])
         
         if err: st.error(f"⚠️ {err}")
@@ -257,7 +259,6 @@ if page == "🔎 Markt Analyse":
 
             st.info(f"**Zenith Thesis:** {thesis}")
             
-            # CHART
             st.subheader("📈 Technical Chart")
             end = df.index[-1]; start = end - pd.DateOffset(years=1); plot_df = df.loc[start:end]
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6,0.2,0.2])
@@ -353,7 +354,7 @@ elif page == "📡 Deep Scanner":
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
             try:
-                # OOK HIER DE FIX: 8 Variabelen
+                # OOK HIER 8 WAARDEN UNPACKEN
                 df, met, _, ws, _, snip, _, _ = get_zenith_data(t)
                 if df is not None:
                     sc = 0
