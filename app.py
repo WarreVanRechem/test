@@ -202,7 +202,7 @@ currency_mode = st.sidebar.radio("Valuta", ["USD ($)", "EUR (€)"])
 curr_symbol = "$" if "USD" in currency_mode else "€"
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("Created by **Warre Van Rechem**")
+st.sidebar.markdown("Created by **[Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)**")
 
 # ==========================================
 # PAGINA 1: ANALYSE (DASHBOARD)
