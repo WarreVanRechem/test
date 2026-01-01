@@ -1,25 +1,35 @@
 import streamlit as st
+
+from ui.layout import sidebar
+from ui.pages import market_page
+
 from data.market import get_price_history
 from data.fundamentals import get_fundamentals
-from analysis.valuation import graham_number, dcf_value
-from analysis.technicals import indicators, regime
+from analysis.valuation import graham_number
+from analysis.technicals import add_indicators, market_regime
 from analysis.risk import max_drawdown
 from analysis.scoring import investment_score
 
-
 st.set_page_config(layout="wide")
-st.title("Zenith Institutional Terminal")
 
+page, ticker, capital = sidebar()
 
-ticker = st.text_input("Ticker", "AAPL")
+df = get_price_history(ticker)
 
+if df is not None:
+    df = add_indicators(df)
 
-if ticker:
-    df = get_price_history(ticker)
-    if df is not None:
-        df = indicators(df)
-        f = get_fundamentals(ticker)
-        fair = graham_number(f['eps'], f['book'])
-        score = investment_score(df['Close'].iloc[-1], fair or df['Close'].iloc[-1], df['RSI'].iloc[-1], max_drawdown(df))
-        st.metric("Investment Score", score)
-        st.line_chart(df['Close'])
+    fundamentals = get_fundamentals(ticker)
+    fair = graham_number(
+        fundamentals.get("eps"),
+        fundamentals.get("book")
+    )
+
+    price = df['Close'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    regime = market_regime(price, df['SMA200'].iloc[-1], rsi)
+
+    score = investment_score(price, fair, rsi, max_drawdown(df))
+
+    if page == "Market Analysis":
+        market_page(df, price, rsi, score, regime)
