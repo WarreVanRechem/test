@@ -154,7 +154,6 @@ def get_macro_data():
     for name, t in tickers.items():
         try:
             obj = yf.Ticker(t)
-            # FIX: Probeer fast_info, anders fallback naar history
             try:
                 p = obj.fast_info.last_price
                 prev = obj.fast_info.previous_close
@@ -194,7 +193,6 @@ def get_zenith_data(ticker):
         ent = df['L'].iloc[-1] if not pd.isna(df['L'].iloc[-1]) else cur
         low = df['Low'].tail(50).min(); high = df['High'].tail(50).max()
         
-        # SNIPER OBJECT (De ideale koopprijs)
         snip = {
             "entry_price": ent, 
             "current_diff": ((cur-ent)/cur)*100, 
@@ -240,7 +238,9 @@ def generate_thesis(met, snip, ws, buys, fund):
     return " ".join(th), sig
 
 # --- UI ---
-st.sidebar.header("Navigatie"); page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner"], key="nav_page")
+st.sidebar.header("Navigatie")
+page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner", "🎓 Leer de Basics"], key="nav_page")
+
 with st.sidebar.expander("🧮 Calculator"):
     acc=st.number_input("Acc",10000); risk=st.slider("Risico",0.5,5.0,1.0); ent=st.number_input("In",100.0); stp=st.number_input("Stop",95.0)
     if stp<ent: st.write(f"**Koop:** {int((acc*(risk/100))/(ent-stp))} stuks")
@@ -291,7 +291,6 @@ if page == "🔎 Markt Analyse":
 
             st.info(f"**Zenith Thesis:** {thesis}")
             
-            # --- HIER ZIT DE HERSTELDE SNIPER SECTIE ---
             st.markdown("---")
             st.subheader("🎯 Sniper Entry Setup (De Ideale Prijs)")
             s1, s2, s3, s4 = st.columns(4)
@@ -397,15 +396,14 @@ elif page == "📡 Deep Scanner":
         lst = [x.strip().upper() for x in txt.split(',')]
         res = []
         bar = st.progress(0)
-        failed = [] # Voor debug
+        failed = [] 
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
-            time.sleep(0.2) # Anti-blockkade pauze
+            time.sleep(0.2) 
             try:
                 df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
                 if df is not None:
                     sc = 0; reasons = []
-                    # HIER IS DE FIX: GEBRUIK 'rr_ratio' (de nieuwe key) ipv 'rr'
                     if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
                     if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
                     if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
@@ -434,7 +432,7 @@ elif page == "📡 Deep Scanner":
     
     if 'res' in st.session_state:
         if not st.session_state['res']:
-            st.warning("Geen resultaten gevonden. Mogelijke oorzaak: Yahoo blokkade of ongeldige tickers.")
+            st.warning("Geen resultaten gevonden.")
         else:
             df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
             st.dataframe(
@@ -454,7 +452,61 @@ elif page == "📡 Deep Scanner":
             if options:
                 sel = c1.selectbox("Kies:", options)
                 c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+
+# --- NIEUWE EDUCATIEVE PAGINA ---
+elif page == "🎓 Leer de Basics":
+    st.title("🎓 Beleggen voor Beginners")
+    st.subheader("Wat betekenen al die getallen in Zenith?")
+    
+    st.markdown("""
+    Beleggen lijkt ingewikkeld door alle termen, maar eigenlijk kijken we naar drie simpele dingen:
+    1. **Is het bedrijf gezond?** (Fundamenteel)
+    2. **Is het aandeel momenteel 'in de mode'?** (Technisch)
+    3. **Wat is het risico?** (Risico management)
+    """)
+    
+    with st.expander("💎 1. De 'Eerlijke Prijs' (Graham & Value)"):
+        st.write("""
+        **Fair Value (Graham Number):** Stel je voor dat je een huis koopt. De verkoper vraagt €500.000, maar op basis van de huurinkomsten en de staat van het huis is het eigenlijk maar €400.000 waard. 
+        Het Graham getal is de 'eerlijke prijs' van een aandeel op basis van de winst en de bezittingen van het bedrijf.
         
-        if 'failed' in st.session_state and st.session_state['failed']:
-            with st.expander("⚠️ Foutrapportage (Debug Info)"):
-                st.write(st.session_state['failed'])
+        * **Aandeelprijs < Fair Value:** Het aandeel is in de 'uitverkoop'.
+        * **Aandeelprijs > Fair Value:** Je betaalt waarschijnlijk te veel.
+        """)
+
+    with st.expander("🌡️ 2. De Thermometer (RSI)"):
+        st.write("""
+        **RSI (Relative Strength Index):**
+        Dit meet of een aandeel 'oververhit' is. 
+        
+        * **Onder 30 (Oversold):** Niemand wil het aandeel meer hebben, het is 'onderkoeld'. Dit is vaak een goed moment om te kijken of je kunt kopen.
+        * **Boven 70 (Overbought):** Iedereen is super enthousiast en koopt massaal. Het aandeel is 'oververhit' en de kans op een daling is groot.
+        """)
+
+    with st.expander("📈 3. De Lange Termijn Trend (SMA 200)"):
+        st.write("""
+        **SMA 200 (Moving Average):**
+        Dit is de gemiddelde prijs van de afgelopen 200 dagen. Zie het als de 'stemming' van het aandeel.
+        
+        * **Prijs boven SMA 200:** Het aandeel zit in een positieve flow (Bullish).
+        * **Prijs onder SMA 200:** Het aandeel zit in een negatieve spiraal (Bearish). Wij kopen liever als het aandeel boven deze lijn zit.
+        """)
+
+    with st.expander("🎯 4. De Sniper Entry & Stop Loss"):
+        st.write("""
+        **Entry (Koopmoment):** De prijs waarop wij willen toeslaan.
+        **Stop Loss:** Je vangnet. Als de prijs hieronder zakt, verkopen we automatisch om grotere verliezen te voorkomen. 
+        **Take Profit:** Je doel. Hier pakken we onze winst en vieren we een feestje.
+        
+        **Risk/Reward (R:R):**
+        Als je €1 riskeert om €3 te kunnen winnen, is je R:R 1 op 3. Wij zoeken altijd naar deals waar je veel meer kunt winnen dan je kunt verliezen (minstens 1:2).
+        """)
+
+    with st.expander("🔮 5. Monte Carlo & Backtesting"):
+        st.write("""
+        **Backtest:** "Wat als ik dit systeem de afgelopen 5 jaar had gebruikt?" De computer rekent uit of je rijk was geworden of alles had verloren.
+        
+        **Monte Carlo:** De computer kijkt naar hoe bewegelijk een aandeel is en gooit dan 200 keer met de dobbelstenen om te zien waar de prijs over een jaar *zou kunnen* staan. Het geeft geen garantie, maar laat zien wat de meest logische uitschieters zijn.
+        """)
+
+    st.success("💡 **Tip:** Begin met de 'Deep Scanner' om aandelen te vinden met een hoge score. Een score boven de 70 betekent dat veel van deze indicators tegelijk op groen staan!")
