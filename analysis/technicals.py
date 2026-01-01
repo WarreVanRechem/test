@@ -1,21 +1,9 @@
-def add_indicators(df):
-    df = df.copy()
+import numpy as np
+import pandas as pd
 
-    df["SMA200"] = df["Close"].rolling(200).mean()
-
-    delta = df["Close"].diff()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(14).mean()
-
-    rs = gain / loss
-    df["RSI"] = 100 - (100 / (1 + rs))
-
-    return df
-
-
-def market_regime(price, sma200, rsi):
-    if price > sma200 and rsi > 50:
-        return "Bull"
-    elif price < sma200 and rsi < 50:
-        return "Bear"
-    return "Range"
+def calculate_atr_stop(df, multiplier=2):
+    hl = df['High'] - df['Low']
+    hc = (df['High'] - df['Close'].shift()).abs()
+    lc = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    return tr.rolling(14).mean().iloc[-1] * multiplier
