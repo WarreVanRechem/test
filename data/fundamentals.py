@@ -1,6 +1,3 @@
-# ==================================================
-# FILE: data/fundamentals.py
-# ==================================================
 import yfinance as yf
 
 
@@ -17,6 +14,5 @@ def get_fundamentals(ticker):
         "fcf": info.get("freeCashflow"),
         "growth": info.get("earningsGrowth"),
         "sector": info.get("sector"),
-        "margin": info.get("profitMargins")
+        "margin": info.get("profitMargins"),
     }
-
