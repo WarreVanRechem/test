@@ -10,6 +10,7 @@ import feedparser
 import warnings
 import requests
 import time
+import io # Nodig voor de nieuwe wikipedia fix
 
 # Try-except voor scipy voor portfolio optimalisatie
 try:
@@ -19,7 +20,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v26.2 Pro", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v26.3 Fixed", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -43,16 +44,27 @@ def start_analysis_for(ticker):
 def reset_analysis():
     st.session_state['analysis_active'] = False
 
-# --- DATA HELPERS ---
+# --- DATA HELPERS (VERBETERD) ---
 @st.cache_data(ttl=86400) # Cache voor 24u
 def get_sp500_tickers():
-    """Haalt de volledige lijst van S&P 500 tickers op van Wikipedia."""
+    """Haalt de volledige lijst van S&P 500 tickers op van Wikipedia met anti-bot headers."""
     try:
-        table = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        # We doen ons voor als een echte browser om blokkades te voorkomen
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers)
+        r.raise_for_status() # Check of de link werkt
+        
+        # Gebruik io.StringIO om warnings te voorkomen in nieuwere pandas versies
+        table = pd.read_html(io.StringIO(r.text))
         df = table[0]
         tickers = df['Symbol'].tolist()
         return [t.replace('.', '-') for t in tickers] # Fix voor BRK.B -> BRK-B
-    except:
+    except Exception as e:
+        # Als het alsnog faalt, tonen we de error in de app (later) en geven we de fallback
+        st.error(f"Kon S&P500 lijst niet laden: {e}")
         return ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "BRK-B", "JNJ", "V"] # Fallback
 
 # --- AI MODEL LADEN ---
@@ -460,7 +472,6 @@ elif page == "💼 Mijn Portfolio":
         if st.button("Wissen"): st.session_state['portfolio'] = []; st.rerun()
     else: st.write("Leeg.")
 
-# --- PAGINA 3: DEEP SCANNER ---
 # --- PAGINA 3: DEEP SCANNER (GEFIXT) ---
 elif page == "📡 Deep Scanner":
     st.title("📡 Opportunity Finder (Tomorrow's Picks)")
@@ -475,17 +486,22 @@ elif page == "📡 Deep Scanner":
             with st.spinner("S&P 500 lijst ophalen van Wikipedia..."):
                 st.session_state['sp500_cache'] = get_sp500_tickers()
         lst = st.session_state['sp500_cache']
-        st.info(f"Klaar om {len(lst)} aandelen te scannen. ⚠️ Dit kan 5-10 minuten duren!")
+        
+        # Check of we de echte lijst hebben of de fallback
+        if len(lst) <= 10:
+             st.warning(f"⚠️ **Let op:** Het downloaden van de volledige lijst is mislukt. We gebruiken nu de backup-lijst van {len(lst)} aandelen.")
+        else:
+             st.info(f"Klaar om {len(lst)} aandelen te scannen. ⚠️ Dit kan 5-10 minuten duren!")
     else:
         txt = st.text_area("Tickers", PRESETS[pre])
         lst = [x.strip().upper() for x in txt.split(',')]
 
-    # 2. De Knop met Callback Logic (Om vastlopen te voorkomen)
+    # 2. De Knop met Callback Logic
     if 'is_scanning' not in st.session_state: st.session_state['is_scanning'] = False
 
     def start_scan():
         st.session_state['is_scanning'] = True
-        st.session_state['res'] = [] # Reset resultaten bij nieuwe scan
+        st.session_state['res'] = [] 
 
     st.button("🚀 Start Deep Scan & Bereken Buy Orders", on_click=start_scan)
 
@@ -494,47 +510,38 @@ elif page == "📡 Deep Scanner":
         res = []
         failed = []
         
-        # Voortgangsbalk en Status container
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Stop knop om halverwege te kunnen annuleren
         if st.button("🛑 Stop Scan"):
             st.session_state['is_scanning'] = False
             st.rerun()
 
         for i, t in enumerate(lst):
-            # Update GUI
             progress = (i + 1) / len(lst)
             progress_bar.progress(progress)
             status_text.markdown(f"**Analyseren:** `{t}` ({i+1}/{len(lst)})")
             
             try:
-                # Data ophalen
                 df, met, fund, ws, _, snip, _, err, _ = get_zenith_data(t)
                 
                 if df is not None:
                     sc = 0; reasons = []
                     
-                    # 1. TREND (30pt)
                     if met['price'] > met['sma200']: sc += 30; reasons.append("Bullish Trend 📈")
                     else: sc -= 20 
 
-                    # 2. MOMENTUM / PULLBACK (30pt)
                     if met['rsi'] < 35: sc += 30; reasons.append("Extreme Oversold 📉")
                     elif met['rsi'] < 45: sc += 15; reasons.append("Pullback Zone")
                     elif met['rsi'] > 70: sc -= 20; reasons.append("Overbought ⚠️")
 
-                    # 3. WAARDE (20pt)
                     if fund['fair_value'] and met['price'] < fund['fair_value']: 
                         sc += 20; reasons.append("Undervalued 💎")
                     
-                    # 4. SNIPER SETUP (20pt)
                     if snip['rr_ratio'] > 2: sc += 20; reasons.append("Goede R/R 🎯")
 
                     adv = "STERK KOPEN" if sc>=80 else "KOPEN" if sc>=60 else "HOUDEN" if sc>=40 else "AFBLIJVEN"
                     
-                    # Filter: Toon alles boven 50 OF alles als de lijst kort is (<20 aandelen)
                     if sc >= 50 or len(lst) < 20:
                         res.append({
                             "Ticker": t, 
@@ -552,18 +559,16 @@ elif page == "📡 Deep Scanner":
             except Exception as e:
                 failed.append(f"{t}: Error {str(e)}")
                 
-            # Kleine pauze om API blokkades te voorkomen bij grote lijsten
             if len(lst) > 20: time.sleep(0.1)
 
-        # 4. Afronding
         st.session_state['res'] = res
         st.session_state['failed'] = failed
-        st.session_state['is_scanning'] = False # Zet scan uit
+        st.session_state['is_scanning'] = False 
         status_text.success("Scan Voltooid!")
         time.sleep(1)
-        st.rerun() # Ververs pagina om tabel te tonen
+        st.rerun() 
 
-    # 5. Resultaten Tonen (Buiten de loop)
+    # 5. Resultaten Tonen
     if 'res' in st.session_state and st.session_state['res']:
         df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
         
@@ -580,11 +585,8 @@ elif page == "📡 Deep Scanner":
                 "STOP LOSS": st.column_config.NumberColumn("Stop Loss", format=f"{curr_sym}%.2f")
             }
         )
-        
-        # Download knop
         st.download_button("📥 Download Resultaten (CSV)", df.to_csv(index=False), "trading_plan.csv", "text/csv")
         
-        # Detail Analyse Selector
         st.markdown("---")
         c1, c2 = st.columns([3, 1])
         options = [r['Ticker'] for r in st.session_state['res']]
@@ -592,7 +594,6 @@ elif page == "📡 Deep Scanner":
             sel = c1.selectbox("Kies voor detail analyse:", options)
             c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
     
-    # 6. Fouten tonen
     if 'failed' in st.session_state and st.session_state['failed']:
         with st.expander(f"⚠️ Rapportage ({len(st.session_state['failed'])} overgeslagen)"): 
             st.write(st.session_state['failed'])
