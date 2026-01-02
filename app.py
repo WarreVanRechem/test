@@ -11,15 +11,24 @@ import warnings
 import requests
 import time
 
-# Try-except voor scipy voor portfolio optimalisatie
+# --- OPTIONELE IMPORTS (VOORKOMT CRASHES) ---
+# Try-except voor scipy (Portfolio optimalisatie)
 try:
     from scipy.optimize import minimize
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
 
+# Try-except voor sklearn (AI Prijs Voorspelling)
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v26.1 Full", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v26.2 AI", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -42,7 +51,7 @@ def start_analysis_for(ticker):
 def reset_analysis():
     st.session_state['analysis_active'] = False
 
-# --- AI MODEL LADEN ---
+# --- AI MODEL LADEN (SENTIMENT) ---
 @st.cache_resource
 def load_ai():
     try: return pipeline("sentiment-analysis", model="ProsusAI/finbert")
@@ -83,6 +92,53 @@ def calculate_atr_stop(df, multiplier=2):
         atr = true_range.rolling(14).mean().iloc[-1]
         return atr * multiplier
     except: return 0.0
+
+def predict_next_day(df):
+    """Voorspelt de prijs van morgen o.b.v. Random Forest."""
+    if not SKLEARN_AVAILABLE:
+        return None, "Sklearn library ontbreekt."
+    
+    try:
+        # 1. Data voorbereiden (Feature Engineering)
+        data = df.copy()
+        data['Target'] = data['Close'].shift(-1) # Doel is prijs van morgen
+        data = data.dropna() # Verwijder laatste rij (geen target) en NaN
+        
+        # Features kiezen (waarop baseert de AI zich?)
+        features = ['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'SMA200']
+        # Check of kolommen bestaan
+        features = [f for f in features if f in data.columns]
+        
+        X = data[features]
+        y = data['Target']
+        
+        # 2. Train/Test Split (80% trainen, 20% testen)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        
+        # 3. Model Trainen
+        model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+        model.fit(X_train, y_train)
+        
+        # 4. Score berekenen (R^2)
+        score = model.score(X_test, y_test)
+        
+        # 5. Voorspelling voor MORGEN maken
+        # We pakken de allerlaatste rij van de originele DF (vandaag) om morgen te voorspellen
+        last_day_features = df[features].iloc[[-1]] 
+        prediction = model.predict(last_day_features)[0]
+        
+        # 6. Test Data voor grafiek (Predicted vs Actual)
+        test_predictions = model.predict(X_test)
+        
+        return {
+            "prediction": prediction,
+            "score": score,
+            "y_test": y_test,
+            "test_preds": test_predictions
+        }, None
+        
+    except Exception as e:
+        return None, str(e)
 
 def get_smart_peers(ticker, info):
     if not info: return ["^GSPC"]
@@ -354,8 +410,40 @@ if page == "🔎 Markt Analyse":
             fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1); fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
             fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False); st.plotly_chart(fig, use_container_width=True)
             
-            t1, t2, t3, t4 = st.tabs(["⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
+            t1, t2, t3, t4, t5 = st.tabs(["🤖 AI Forecast", "⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
+            
             with t1:
+                st.subheader("🤖 AI Price Prediction (Random Forest)")
+                if SKLEARN_AVAILABLE:
+                    with st.spinner("AI model aan het trainen op live data..."):
+                        ai_res, ai_err = predict_next_day(df)
+                    
+                    if ai_err:
+                        st.error(ai_err)
+                    elif ai_res:
+                        pred_price = ai_res['prediction']
+                        score_pct = ai_res['score'] * 100
+                        change_pred = ((pred_price - met['price']) / met['price']) * 100
+                        
+                        col_ai1, col_ai2 = st.columns(2)
+                        col_ai1.metric("Voorspelling (Morgen)", f"{curr_sym}{pred_price:.2f}", f"{change_pred:.2f}%")
+                        col_ai2.metric("Model Betrouwbaarheid (R²)", f"{score_pct:.1f}%", help="Hoe goed het model historische data kon verklaren.")
+                        
+                        st.caption(f"Dit model heeft getraind op {len(df)} dagen data en gebruikt Open, High, Low, Volume, RSI en SMA200 als indicators.")
+                        
+                        # Plot Actual vs Predicted (Test Set)
+                        st.markdown("#### Model Performance (Backtest op ongeziene data)")
+                        test_df = pd.DataFrame({"Werkelijk": ai_res['y_test'], "Voorspeld": ai_res['test_preds']}, index=ai_res['y_test'].index)
+                        
+                        fig_ai = go.Figure()
+                        fig_ai.add_trace(go.Scatter(x=test_df.index, y=test_df['Werkelijk'], mode='lines', name='Werkelijk', line=dict(color='cyan')))
+                        fig_ai.add_trace(go.Scatter(x=test_df.index, y=test_df['Voorspeld'], mode='lines', name='AI Voorspelling', line=dict(color='magenta', dash='dot')))
+                        fig_ai.update_layout(template="plotly_dark", height=400)
+                        st.plotly_chart(fig_ai, use_container_width=True)
+                else:
+                    st.warning("Installeer scikit-learn om deze functie te gebruiken: `pip install scikit-learn`")
+
+            with t2:
                 st.subheader("Competitie Check")
                 if peers:
                     st.write(f"Automatisch vergeleken met: {', '.join(peers)}")
@@ -364,7 +452,7 @@ if page == "🔎 Markt Analyse":
                         if pd_data is not None: st.line_chart(pd_data)
                         else: st.error("Geen data.")
                 else: st.warning("Geen concurrenten gevonden.")
-            with t2:
+            with t3:
                 if st.button("🚀 Draai Backtest"):
                     res = run_backtest(tick)
                     if isinstance(res, str): st.error(res)
@@ -372,7 +460,7 @@ if page == "🔎 Markt Analyse":
                         c1, c2, c3 = st.columns(3)
                         c1.metric("Strategy", f"{res['return']:.1f}%"); c2.metric("Buy&Hold", f"{res['bh_return']:.1f}%"); c3.metric("Trades", res['trades'])
                         st.line_chart(res['history']['Close'])
-            with t3:
+            with t4:
                 if st.button("🔮 Simulatie"):
                     sims = run_monte_carlo(tick)
                     if sims is not None:
@@ -380,7 +468,7 @@ if page == "🔎 Markt Analyse":
                         for i in range(50): f.add_trace(go.Scatter(y=sims[i], mode='lines', line=dict(width=1, color='rgba(0,255,255,0.1)'), showlegend=False))
                         f.add_trace(go.Scatter(y=np.mean(sims,axis=0), mode='lines', line=dict(width=3, color='yellow'), name='Avg'))
                         f.update_layout(template="plotly_dark"); st.plotly_chart(f, use_container_width=True)
-            with t4:
+            with t5:
                 for n in news:
                     c = "green" if n['sentiment']=="POSITIVE" else "red" if n['sentiment']=="NEGATIVE" else "gray"
                     st.markdown(f":{c}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
@@ -540,8 +628,15 @@ elif page == "🎓 Leer de Basics":
         * **Waarom ATR?** Een stabiel aandeel (als Coca-Cola) heeft een krappe stop loss nodig. Een wild aandeel (als Tesla) heeft ruimte nodig om te ademen zonder dat je direct wordt 'uitgeschud'.
         * **Risk/Reward:** Wij mikken op 1:2. Dat betekent dat we bereid zijn €1 te riskeren om €2 te verdienen.
         """)
+    
+    with st.expander("🤖 5. AI Forecast (Random Forest)"):
+        st.write("""
+        **Wat is het?** Een Machine Learning model (Random Forest) dat historische data analyseert.
+        * **Hoe werkt het?** Het kijkt naar patronen tussen prijs, volume en indicatoren (RSI, SMA) om de slotkoers van MORGEN te voorspellen.
+        * **Betrouwbaarheid:** Check altijd de R² score. Hoe hoger, hoe beter het model in het verleden de koers kon volgen.
+        """)
 
-    with st.expander("🔗 5. Correlatie Matrix (Je Geheime Wapen)"):
+    with st.expander("🔗 6. Correlatie Matrix (Je Geheime Wapen)"):
         st.write("""
         **Wat is het?** Het laat zien of je aandelen 'vriendjes' zijn.
         * **Correlatie 1.0:** Als aandeel A stijgt, stijgt B ook. Dit is gevaarlijk (geen spreiding).
@@ -549,7 +644,7 @@ elif page == "🎓 Leer de Basics":
         * **Voorbeeld:** Als je alleen maar AI-aandelen koopt, is je correlatie vaak 0.9. Als de tech-sector valt, valt je hele portfolio.
         """)
 
-    with st.expander("🔮 6. Monte Carlo & Backtesting"):
+    with st.expander("🔮 7. Monte Carlo & Backtesting"):
         st.write("""
         **Backtest:** Een simulatie van "Wat als ik dit in het verleden had gedaan?". Het geeft geen garantie, maar laat zien of een strategie statistisch werkt.
         **Monte Carlo:** Een computer die 200 keer 'met de dobbelstenen gooit' om te zien waar de prijs over een jaar kan eindigen op basis van huidige grilligheid.
