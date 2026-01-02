@@ -461,70 +461,80 @@ elif page == "💼 Mijn Portfolio":
     else: st.write("Leeg.")
 
 # --- PAGINA 3: DEEP SCANNER ---
+# --- PAGINA 3: DEEP SCANNER (GEFIXT) ---
 elif page == "📡 Deep Scanner":
     st.title("📡 Opportunity Finder (Tomorrow's Picks)")
     st.markdown("Deze scanner zoekt naar statistisch voordelige instapmomenten voor morgen.")
     
+    # 1. Selectie maken
     pre = st.selectbox("Selecteer Markt", list(PRESETS.keys()))
     
-    # Logic om S&P 500 lijst te fetchen indien nodig
+    # Logic om S&P 500 lijst te fetchen
     if pre == "🌎 S&P 500 (Volledige Lijst)":
         if not st.session_state['sp500_cache']:
             with st.spinner("S&P 500 lijst ophalen van Wikipedia..."):
                 st.session_state['sp500_cache'] = get_sp500_tickers()
         lst = st.session_state['sp500_cache']
-        st.info(f"Klaar om {len(lst)} aandelen te scannen. Dit kan 5-10 minuten duren.")
+        st.info(f"Klaar om {len(lst)} aandelen te scannen. ⚠️ Dit kan 5-10 minuten duren!")
     else:
         txt = st.text_area("Tickers", PRESETS[pre])
         lst = [x.strip().upper() for x in txt.split(',')]
 
-    scan_btn = st.button("Start Deep Scan & Bereken Buy Orders")
+    # 2. De Knop met Callback Logic (Om vastlopen te voorkomen)
+    if 'is_scanning' not in st.session_state: st.session_state['is_scanning'] = False
 
-    if scan_btn:
+    def start_scan():
+        st.session_state['is_scanning'] = True
+        st.session_state['res'] = [] # Reset resultaten bij nieuwe scan
+
+    st.button("🚀 Start Deep Scan & Bereken Buy Orders", on_click=start_scan)
+
+    # 3. Het Scan Proces
+    if st.session_state['is_scanning']:
         res = []
-        bar = st.progress(0)
-        status = st.empty()
-        failed = [] 
+        failed = []
         
+        # Voortgangsbalk en Status container
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Stop knop om halverwege te kunnen annuleren
+        if st.button("🛑 Stop Scan"):
+            st.session_state['is_scanning'] = False
+            st.rerun()
+
         for i, t in enumerate(lst):
-            bar.progress((i)/len(lst))
-            status.text(f"Analyseren: {t}...")
-            # Kleine sleep om rate limits te voorkomen bij grote lijsten
-            if len(lst) > 50: time.sleep(0.1) 
+            # Update GUI
+            progress = (i + 1) / len(lst)
+            progress_bar.progress(progress)
+            status_text.markdown(f"**Analyseren:** `{t}` ({i+1}/{len(lst)})")
             
             try:
-                # We gebruiken een lichtere check eerst om tijd te besparen bij 500+ stocks
-                # Maar voor nauwkeurigheid gebruiken we hier de full fetch
-                df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
+                # Data ophalen
+                df, met, fund, ws, _, snip, _, err, _ = get_zenith_data(t)
                 
                 if df is not None:
                     sc = 0; reasons = []
                     
                     # 1. TREND (30pt)
-                    if met['price'] > met['sma200']: 
-                        sc += 30; reasons.append("Bullish Trend 📈")
-                    else:
-                        sc -= 20 # Strafpunten voor bearish trend
+                    if met['price'] > met['sma200']: sc += 30; reasons.append("Bullish Trend 📈")
+                    else: sc -= 20 
 
                     # 2. MOMENTUM / PULLBACK (30pt)
-                    if met['rsi'] < 35: 
-                        sc += 30; reasons.append("Extreme Oversold 📉")
-                    elif met['rsi'] < 45:
-                        sc += 15; reasons.append("Pullback Zone")
-                    elif met['rsi'] > 70:
-                        sc -= 20; reasons.append("Overbought ⚠️")
+                    if met['rsi'] < 35: sc += 30; reasons.append("Extreme Oversold 📉")
+                    elif met['rsi'] < 45: sc += 15; reasons.append("Pullback Zone")
+                    elif met['rsi'] > 70: sc -= 20; reasons.append("Overbought ⚠️")
 
                     # 3. WAARDE (20pt)
                     if fund['fair_value'] and met['price'] < fund['fair_value']: 
                         sc += 20; reasons.append("Undervalued 💎")
                     
                     # 4. SNIPER SETUP (20pt)
-                    if snip['rr_ratio'] > 2: 
-                        sc += 20; reasons.append("Goede Risk/Reward 🎯")
+                    if snip['rr_ratio'] > 2: sc += 20; reasons.append("Goede R/R 🎯")
 
                     adv = "STERK KOPEN" if sc>=80 else "KOPEN" if sc>=60 else "HOUDEN" if sc>=40 else "AFBLIJVEN"
                     
-                    # Alleen interessante aandelen tonen (boven score 50) of als het lijstje klein is alles
+                    # Filter: Toon alles boven 50 OF alles als de lijst kort is (<20 aandelen)
                     if sc >= 50 or len(lst) < 20:
                         res.append({
                             "Ticker": t, 
@@ -536,54 +546,56 @@ elif page == "📡 Deep Scanner":
                             "Advies": adv,
                             "Setup": ", ".join(reasons)
                         })
-                else: failed.append(f"{t}: Geen data")
+                else:
+                    failed.append(f"{t}: Geen data ({err})")
+                
             except Exception as e:
-                failed.append(f"{t}: {str(e)}")
-        
-        bar.empty()
-        status.empty()
+                failed.append(f"{t}: Error {str(e)}")
+                
+            # Kleine pauze om API blokkades te voorkomen bij grote lijsten
+            if len(lst) > 20: time.sleep(0.1)
+
+        # 4. Afronding
         st.session_state['res'] = res
         st.session_state['failed'] = failed
-    
-    if 'res' in st.session_state:
-        if not st.session_state['res']:
-            st.warning("Geen koopwaardige signalen gevonden in deze lijst.")
-        else:
-            df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
-            
-            st.subheader("📋 Top Picks voor Morgen")
-            st.dataframe(
-                df, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn("Kans", format="%d", min_value=0, max_value=100),
-                    "Huidige Prijs": st.column_config.NumberColumn("Prijs Nu", format=f"{curr_sym}%.2f"),
-                    "BUY ORDER": st.column_config.NumberColumn("Zet Buy Op", format=f"{curr_sym}%.2f", help="Zet hier je Limit Order"),
-                    "SELL TARGET": st.column_config.NumberColumn("Sell Target", format=f"{curr_sym}%.2f", help="Verkoop hier voor winst"),
-                    "STOP LOSS": st.column_config.NumberColumn("Stop Loss", format=f"{curr_sym}%.2f", help="Verkoop hier bij verlies")
-                }
-            )
-            
-            st.markdown("### 💡 Hoe gebruik je dit?")
-            st.info("""
-            1. Kies een aandeel met een hoge score.
-            2. Log in bij je broker.
-            3. Zet een **Limit Buy Order** op de prijs in de kolom 'Zet Buy Op'.
-            4. Als de order gevuld wordt, zet direct een **Stop Loss** en een **Sell Order** (Target).
-            """)
-            
-            st.download_button("📥 Download Resultaten (CSV)", df.to_csv(index=False), "trading_plan.csv", "text/csv")
-            
-            st.markdown("---")
-            c1, c2 = st.columns([3, 1])
-            options = [r['Ticker'] for r in st.session_state['res']]
-            if options:
-                sel = c1.selectbox("Kies voor detail analyse:", options)
-                c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+        st.session_state['is_scanning'] = False # Zet scan uit
+        status_text.success("Scan Voltooid!")
+        time.sleep(1)
+        st.rerun() # Ververs pagina om tabel te tonen
+
+    # 5. Resultaten Tonen (Buiten de loop)
+    if 'res' in st.session_state and st.session_state['res']:
+        df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
         
-        if 'failed' in st.session_state and st.session_state['failed']:
-            with st.expander("⚠️ Foutrapportage"): st.write(st.session_state['failed'])
+        st.subheader("📋 Top Picks voor Morgen")
+        st.dataframe(
+            df, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Kans", format="%d", min_value=0, max_value=100),
+                "Huidige Prijs": st.column_config.NumberColumn("Prijs Nu", format=f"{curr_sym}%.2f"),
+                "BUY ORDER": st.column_config.NumberColumn("Zet Buy Op", format=f"{curr_sym}%.2f"),
+                "SELL TARGET": st.column_config.NumberColumn("Sell Target", format=f"{curr_sym}%.2f"),
+                "STOP LOSS": st.column_config.NumberColumn("Stop Loss", format=f"{curr_sym}%.2f")
+            }
+        )
+        
+        # Download knop
+        st.download_button("📥 Download Resultaten (CSV)", df.to_csv(index=False), "trading_plan.csv", "text/csv")
+        
+        # Detail Analyse Selector
+        st.markdown("---")
+        c1, c2 = st.columns([3, 1])
+        options = [r['Ticker'] for r in st.session_state['res']]
+        if options:
+            sel = c1.selectbox("Kies voor detail analyse:", options)
+            c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+    
+    # 6. Fouten tonen
+    if 'failed' in st.session_state and st.session_state['failed']:
+        with st.expander(f"⚠️ Rapportage ({len(st.session_state['failed'])} overgeslagen)"): 
+            st.write(st.session_state['failed'])
 
 # --- PAGINA 4: EDUCATE & BASICS ---
 elif page == "🎓 Leer de Basics":
