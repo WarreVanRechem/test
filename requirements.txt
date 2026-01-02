@@ -10,3 +10,4 @@ scipy
 requests
 tabulate
 lxml
+scikit-learn
