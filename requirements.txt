@@ -9,4 +9,4 @@ feedparser
 scipy
 requests
 tabulate
-
+lxml
