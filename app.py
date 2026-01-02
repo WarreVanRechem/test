@@ -19,11 +19,11 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v26.2 Pro", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v26.1 Full", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
-st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. De 'Buy Orders' zijn berekend op basis van statistische waarschijnlijkheid, geen garanties.")
+st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
@@ -32,7 +32,6 @@ if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
 if 'nav_page' not in st.session_state: st.session_state['nav_page'] = "🔎 Markt Analyse"
 if 'selected_ticker' not in st.session_state: st.session_state['selected_ticker'] = "RDW"
 if 'analysis_active' not in st.session_state: st.session_state['analysis_active'] = False
-if 'sp500_cache' not in st.session_state: st.session_state['sp500_cache'] = []
 
 # --- NAVIGATIE FUNCTIES ---
 def start_analysis_for(ticker):
@@ -42,18 +41,6 @@ def start_analysis_for(ticker):
 
 def reset_analysis():
     st.session_state['analysis_active'] = False
-
-# --- DATA HELPERS ---
-@st.cache_data(ttl=86400) # Cache voor 24u
-def get_sp500_tickers():
-    """Haalt de volledige lijst van S&P 500 tickers op van Wikipedia."""
-    try:
-        table = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        df = table[0]
-        tickers = df['Symbol'].tolist()
-        return [t.replace('.', '-') for t in tickers] # Fix voor BRK.B -> BRK-B
-    except:
-        return ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "BRK-B", "JNJ", "V"] # Fallback
 
 # --- AI MODEL LADEN ---
 @st.cache_resource
@@ -65,11 +52,10 @@ ai_pipe = load_ai()
 
 # --- PRESETS VOOR SCANNER ---
 PRESETS = {
-    "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR, INTC, IBM, ORCL",
-    "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BESI.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR, INGA.AS, DSM.AS",
-    "🚀 High Growth (Volatiel)": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN, DKNG, RBLX, U",
-    "🛡️ Defensive (Dividend)": "KO, JNJ, PEP, MCD, O, V, BRK-B, PG, WMT, COST",
-    "🌎 S&P 500 (Volledige Lijst)": "FULL_SP500" # Speciale trigger
+    "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR",
+    "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BESI.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR, INGA.AS",
+    "🚀 High Growth": "COIN, MSTR, SMCI, HOOD, PLTR, SOFI, RIVN",
+    "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
 # --- ANALYSE FUNCTIES ---
@@ -95,8 +81,8 @@ def calculate_atr_stop(df, multiplier=2):
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = np.max(ranges, axis=1)
         atr = true_range.rolling(14).mean().iloc[-1]
-        return atr * multiplier, atr # Return value en ruwe ATR
-    except: return 0.0, 0.0
+        return atr * multiplier
+    except: return 0.0
 
 def get_smart_peers(ticker, info):
     if not info: return ["^GSPC"]
@@ -231,25 +217,17 @@ def get_zenith_data(ticker):
         delta = df['Close'].diff(); rs = (delta.where(delta>0,0).rolling(14).mean()) / (-delta.where(delta<0,0).rolling(14).mean())
         df['RSI'] = 100-(100/(1+rs))
         
-        # NIEUW: ATR Based Stop Loss en Trades
-        atr_stop_dist, raw_atr = calculate_atr_stop(df)
-        
-        # Bepaal BUY ORDER LEVEL: Iets boven de Lower Band of huidige prijs als momentum sterk is
-        buy_level = max(df['L'].iloc[-1], cur * 0.98) # Probeer in de dip te kopen
-        if cur > df['SMA200'].iloc[-1] and df['RSI'].iloc[-1] < 40:
-            buy_level = cur # Aggressieve entry
-        
-        stop_level = buy_level - atr_stop_dist
-        # Target: Risk 1 : Reward 2
-        target_level = buy_level + (atr_stop_dist * 2) 
+        # NIEUW: ATR Based Stop Loss
+        atr_val = calculate_atr_stop(df)
+        ent = df['L'].iloc[-1] if not pd.isna(df['L'].iloc[-1]) else cur
+        high = df['High'].tail(50).max()
         
         snip = {
-            "entry_price": buy_level, 
-            "current_diff": ((cur-buy_level)/cur)*100, 
-            "stop_loss": stop_level,
-            "take_profit": target_level, 
-            "rr_ratio": (target_level-buy_level)/(buy_level-stop_level) if (buy_level-stop_level)>0 else 0,
-            "atr": raw_atr
+            "entry_price": ent, 
+            "current_diff": ((cur-ent)/cur)*100, 
+            "stop_loss": cur - atr_val,
+            "take_profit": high, 
+            "rr_ratio": (high-ent)/(atr_val) if atr_val>0 else 0 
         }
         
         try: 
@@ -348,9 +326,9 @@ if page == "🔎 Markt Analyse":
             st.subheader("🎯 Sniper Entry Setup (ATR Volatiliteit)")
             s1, s2, s3, s4 = st.columns(4)
             msg = "✅ NU KOPEN!" if snip['current_diff'] < 1.5 else f"Wacht (-{snip['current_diff']:.1f}%)"
-            s1.metric("1. BUY ORDER (Limit)", f"{curr_sym}{snip['entry_price']:.2f}", msg)
-            s2.metric("2. STOP LOSS (Sell)", f"{curr_sym}{snip['stop_loss']:.2f}")
-            s3.metric("3. TAKE PROFIT (Sell)", f"{curr_sym}{snip['take_profit']:.2f}")
+            s1.metric("1. Entry (Ideaal)", f"{curr_sym}{snip['entry_price']:.2f}", msg)
+            s2.metric("2. Stop Loss (ATR)", f"{curr_sym}{snip['stop_loss']:.2f}")
+            s3.metric("3. Take Profit", f"{curr_sym}{snip['take_profit']:.2f}")
             rr_c = "green" if snip['rr_ratio']>=2 else "orange"
             s4.markdown(f"**4. Risk/Reward:** :{rr_c}[1 : {snip['rr_ratio']:.1f}]")
             
@@ -435,6 +413,7 @@ elif page == "💼 Mijn Portfolio":
         
         st.write(pd.DataFrame(p_data).to_markdown(index=False), unsafe_allow_html=True)
         
+        # --- NIEUW: CORRELATIE MATRIX ---
         if len(tickers) > 1:
             st.subheader("🔗 Correlatie Matrix (Risk Check)")
             try:
@@ -462,124 +441,68 @@ elif page == "💼 Mijn Portfolio":
 
 # --- PAGINA 3: DEEP SCANNER ---
 elif page == "📡 Deep Scanner":
-    st.title("📡 Opportunity Finder (Tomorrow's Picks)")
-    st.markdown("Deze scanner zoekt naar statistisch voordelige instapmomenten voor morgen.")
-    
-    pre = st.selectbox("Selecteer Markt", list(PRESETS.keys()))
-    
-    # Logic om S&P 500 lijst te fetchen indien nodig
-    if pre == "🌎 S&P 500 (Volledige Lijst)":
-        if not st.session_state['sp500_cache']:
-            with st.spinner("S&P 500 lijst ophalen van Wikipedia..."):
-                st.session_state['sp500_cache'] = get_sp500_tickers()
-        lst = st.session_state['sp500_cache']
-        st.info(f"Klaar om {len(lst)} aandelen te scannen. Dit kan 5-10 minuten duren.")
-    else:
-        txt = st.text_area("Tickers", PRESETS[pre])
+    st.title("Scanner")
+    pre = st.selectbox("Markt", list(PRESETS.keys()))
+    txt = st.text_area("Tickers", PRESETS[pre])
+    if st.button("Scan"):
         lst = [x.strip().upper() for x in txt.split(',')]
-
-    scan_btn = st.button("Start Deep Scan & Bereken Buy Orders")
-
-    if scan_btn:
         res = []
         bar = st.progress(0)
-        status = st.empty()
         failed = [] 
-        
         for i, t in enumerate(lst):
             bar.progress((i)/len(lst))
-            status.text(f"Analyseren: {t}...")
-            # Kleine sleep om rate limits te voorkomen bij grote lijsten
-            if len(lst) > 50: time.sleep(0.1) 
-            
+            time.sleep(0.2) 
             try:
-                # We gebruiken een lichtere check eerst om tijd te besparen bij 500+ stocks
-                # Maar voor nauwkeurigheid gebruiken we hier de full fetch
                 df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
-                
                 if df is not None:
                     sc = 0; reasons = []
-                    
-                    # 1. TREND (30pt)
-                    if met['price'] > met['sma200']: 
-                        sc += 30; reasons.append("Bullish Trend 📈")
-                    else:
-                        sc -= 20 # Strafpunten voor bearish trend
+                    if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
+                    if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
+                    if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
+                    if fund['fair_value'] and met['price'] < fund['fair_value']: sc += 15; reasons.append("Value 💎")
+                    if snip['rr_ratio'] > 2: sc += 15; reasons.append("Sniper 🎯")
+                    if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
 
-                    # 2. MOMENTUM / PULLBACK (30pt)
-                    if met['rsi'] < 35: 
-                        sc += 30; reasons.append("Extreme Oversold 📉")
-                    elif met['rsi'] < 45:
-                        sc += 15; reasons.append("Pullback Zone")
-                    elif met['rsi'] > 70:
-                        sc -= 20; reasons.append("Overbought ⚠️")
-
-                    # 3. WAARDE (20pt)
-                    if fund['fair_value'] and met['price'] < fund['fair_value']: 
-                        sc += 20; reasons.append("Undervalued 💎")
+                    adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
                     
-                    # 4. SNIPER SETUP (20pt)
-                    if snip['rr_ratio'] > 2: 
-                        sc += 20; reasons.append("Goede Risk/Reward 🎯")
-
-                    adv = "STERK KOPEN" if sc>=80 else "KOPEN" if sc>=60 else "HOUDEN" if sc>=40 else "AFBLIJVEN"
-                    
-                    # Alleen interessante aandelen tonen (boven score 50) of als het lijstje klein is alles
-                    if sc >= 50 or len(lst) < 20:
-                        res.append({
-                            "Ticker": t, 
-                            "Huidige Prijs": met['price'], 
-                            "BUY ORDER": snip['entry_price'],
-                            "SELL TARGET": snip['take_profit'],
-                            "STOP LOSS": snip['stop_loss'],
-                            "Score": sc, 
-                            "Advies": adv,
-                            "Setup": ", ".join(reasons)
-                        })
+                    res.append({
+                        "Ticker": t, 
+                        "Prijs": met['price'], 
+                        "Analist Doel": f"{curr_sym}{ws['target']:.2f}",
+                        "Upside": f"{ws['upside']:.1f}%",
+                        "Score": sc, 
+                        "Advies": adv,
+                        "Reden": " + ".join(reasons) if reasons else "-"
+                    })
                 else: failed.append(f"{t}: Geen data")
             except Exception as e:
                 failed.append(f"{t}: {str(e)}")
         
         bar.empty()
-        status.empty()
         st.session_state['res'] = res
         st.session_state['failed'] = failed
     
     if 'res' in st.session_state:
         if not st.session_state['res']:
-            st.warning("Geen koopwaardige signalen gevonden in deze lijst.")
+            st.warning("Geen resultaten gevonden.")
         else:
             df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
-            
-            st.subheader("📋 Top Picks voor Morgen")
             st.dataframe(
                 df, 
                 use_container_width=True, 
                 hide_index=True,
                 column_config={
-                    "Score": st.column_config.ProgressColumn("Kans", format="%d", min_value=0, max_value=100),
-                    "Huidige Prijs": st.column_config.NumberColumn("Prijs Nu", format=f"{curr_sym}%.2f"),
-                    "BUY ORDER": st.column_config.NumberColumn("Zet Buy Op", format=f"{curr_sym}%.2f", help="Zet hier je Limit Order"),
-                    "SELL TARGET": st.column_config.NumberColumn("Sell Target", format=f"{curr_sym}%.2f", help="Verkoop hier voor winst"),
-                    "STOP LOSS": st.column_config.NumberColumn("Stop Loss", format=f"{curr_sym}%.2f", help="Verkoop hier bij verlies")
+                    "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
+                    "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_sym}%.2f")
                 }
             )
-            
-            st.markdown("### 💡 Hoe gebruik je dit?")
-            st.info("""
-            1. Kies een aandeel met een hoge score.
-            2. Log in bij je broker.
-            3. Zet een **Limit Buy Order** op de prijs in de kolom 'Zet Buy Op'.
-            4. Als de order gevuld wordt, zet direct een **Stop Loss** en een **Sell Order** (Target).
-            """)
-            
-            st.download_button("📥 Download Resultaten (CSV)", df.to_csv(index=False), "trading_plan.csv", "text/csv")
+            st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
             
             st.markdown("---")
             c1, c2 = st.columns([3, 1])
             options = [r['Ticker'] for r in st.session_state['res']]
             if options:
-                sel = c1.selectbox("Kies voor detail analyse:", options)
+                sel = c1.selectbox("Kies:", options)
                 c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
         
         if 'failed' in st.session_state and st.session_state['failed']:
@@ -587,24 +510,49 @@ elif page == "📡 Deep Scanner":
 
 # --- PAGINA 4: EDUCATE & BASICS ---
 elif page == "🎓 Leer de Basics":
-    st.title("🎓 Zenith Academy")
-    st.markdown("### Hoe wij 'morgen' voorspellen")
-    st.write("We kunnen de toekomst niet zien, maar we kunnen wel waarschijnlijkheden berekenen.")
-    
-    with st.expander("📊 De Strategie achter de Scanner"):
+    st.title("🎓 Zenith Academy: Beleggen voor Beginners")
+    st.markdown("### Begrijp de data achter je beslissingen")
+
+    with st.expander("💎 1. De 'Eerlijke Prijs' (Graham Number)"):
         st.write("""
-        **Mean Reversion:**
-        Aandelen bewegen vaak als een elastiekje. Als ze te ver uitgerekt worden (te snel stijgen of dalen), schieten ze vroeg of laat terug naar het midden.
-        
-        **De Formule:**
-        1. **Trend:** We checken of het 200-daags gemiddelde (SMA200) stijgt. We willen alleen kopen in een opgaande markt.
-        2. **Pullback:** We wachten tot de prijs even zakt (RSI < 40). Dit is het 'spannen' van het elastiekje.
-        3. **Trigger:** De scanner berekent de prijs net boven de 'Lower Bollinger Band'. Dat is vaak de bodem van de dip.
+        **Wat is het?** Een berekening die kijkt naar de winst en bezittingen om de 'echte' waarde van een aandeel te bepalen.
+        * **De Metafoor:** Zie het als de taxatiewaarde van een huis. Als de vraagprijs lager is dan de taxatie, heb je een goede deal.
+        * **Zenith Tip:** Wij zoeken aandelen waar de huidige prijs onder de Fair Value ligt.
         """)
 
-    with st.expander("🎯 Waarom Buy & Sell orders vooraf bepalen?"):
+    with st.expander("🌡️ 2. De Thermometer (RSI)"):
         st.write("""
-        Emoties zijn je vijand. Door vooraf je instap (Buy), je verlies (Stop Loss) en je winst (Target) vast te leggen, haal je de emotie uit het spel.
-        * **Stop Loss:** Gebaseerd op ATR (Average True Range). Als de prijs meer beweegt dan normaal tegen je in, ben je fout en moet je eruit.
-        * **Target:** We gaan voor een 1:2 verhouding. We riskeren 1 euro om er 2 te verdienen.
+        **Wat is het?** De Relative Strength Index (RSI) meet of een aandeel te snel gestegen of gedaald is.
+        * **Onder 30:** Het aandeel is 'onderkoeld' (Oversold). Vaak een koopkans.
+        * **Boven 70:** Het aandeel is 'oververhit' (Overbought). De kans op een daling is groot.
         """)
+
+    with st.expander("📈 3. De Lange Termijn Trend (SMA 200)"):
+        st.write("""
+        **Wat is het?** Het gemiddelde van de prijs over de laatste 200 dagen.
+        * **Boven de lijn:** De trend is positief (Bullish).
+        * **Onder de lijn:** De trend is negatief (Bearish). Professionals kopen meestal alleen als de prijs boven deze lijn zit.
+        """)
+
+    with st.expander("🎯 4. De Sniper & ATR Stop Loss"):
+        st.write("""
+        **Wat is ATR?** De Average True Range meet hoe 'wild' een aandeel beweegt.
+        * **Waarom ATR?** Een stabiel aandeel (als Coca-Cola) heeft een krappe stop loss nodig. Een wild aandeel (als Tesla) heeft ruimte nodig om te ademen zonder dat je direct wordt 'uitgeschud'.
+        * **Risk/Reward:** Wij mikken op 1:2. Dat betekent dat we bereid zijn €1 te riskeren om €2 te verdienen.
+        """)
+
+    with st.expander("🔗 5. Correlatie Matrix (Je Geheime Wapen)"):
+        st.write("""
+        **Wat is het?** Het laat zien of je aandelen 'vriendjes' zijn.
+        * **Correlatie 1.0:** Als aandeel A stijgt, stijgt B ook. Dit is gevaarlijk (geen spreiding).
+        * **Correlatie < 0.5:** Je aandelen reageren anders op de markt. Dit is veiliger.
+        * **Voorbeeld:** Als je alleen maar AI-aandelen koopt, is je correlatie vaak 0.9. Als de tech-sector valt, valt je hele portfolio.
+        """)
+
+    with st.expander("🔮 6. Monte Carlo & Backtesting"):
+        st.write("""
+        **Backtest:** Een simulatie van "Wat als ik dit in het verleden had gedaan?". Het geeft geen garantie, maar laat zien of een strategie statistisch werkt.
+        **Monte Carlo:** Een computer die 200 keer 'met de dobbelstenen gooit' om te zien waar de prijs over een jaar kan eindigen op basis van huidige grilligheid.
+        """)
+
+    st.success("💡 **Gouden regel:** Een goede belegger kijkt niet naar de prijs van vandaag, maar naar de trend van morgen en het risico van gisteren.")
