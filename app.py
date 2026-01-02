@@ -14,9 +14,9 @@ import io
 
 # --- MACHINE LEARNING IMPORTS ---
 try:
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import precision_score
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.preprocessing import StandardScaler
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -29,13 +29,13 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith AI Terminal v27.0 ML-Edition", layout="wide", page_icon="🧬")
+st.set_page_config(page_title="Zenith AI Terminal v28.0 Pro ML", layout="wide", page_icon="🧠")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
-st.sidebar.error("⚠️ **AI DISCLAIMER:** De 'ML Kans' is een statistische voorspelling, geen glazen bol. Gebruik altijd Stop Loss.")
+st.sidebar.error("⚠️ **AI DISCLAIMER:** Dit model gebruikt Gradient Boosting op historische data. Resultaten uit het verleden bieden geen garantie voor de toekomst.")
 st.sidebar.markdown("---")
-st.sidebar.markdown("© 2026 Zenith Terminal | AI Upgraded")
+st.sidebar.markdown("© 2026 Zenith Terminal | Advanced ML Edition")
 
 # --- SESSION STATE ---
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
@@ -113,46 +113,78 @@ def calculate_atr_stop(df, multiplier=2):
         return atr * multiplier, atr
     except: return 0.0, 0.0
 
-# --- MACHINE LEARNING ENGINE (NIEUW) ---
-def get_ml_probability(df):
+# --- ADVANCED MACHINE LEARNING ENGINE (PRO) ---
+def get_ml_probability_advanced(df):
     """
-    Traint een Random Forest model live op de historische data van DIT aandeel
-    om te voorspellen of de prijs morgen stijgt.
+    Gebruikt Gradient Boosting + Feature Engineering om de kans op stijging te voorspellen.
+    Inclusief 'Explainability' (waarom denkt de AI dit?).
     """
-    if not SKLEARN_AVAILABLE or len(df) < 200:
-        return 50.0 # Neutraal als geen ML mogelijk is
+    if not SKLEARN_AVAILABLE or len(df) < 250:
+        return 50.0, "Te weinig data"
 
     try:
         data = df.copy()
-        # Features maken (Wat ziet het model?)
-        data['Returns'] = data['Close'].pct_change()
-        data['SMA_Diff'] = (data['Close'] - data['SMA200']) / data['SMA200']
-        data['RSI'] = data['RSI']
-        data['Vol_Change'] = data['Volume'].pct_change()
         
-        # Target (Wat willen we weten?): Stijgt de prijs morgen? (1 = Ja, 0 = Nee)
+        # 1. Feature Engineering (Rijkere Data)
+        # Returns & Lags (Context uit verleden)
+        data['Ret'] = data['Close'].pct_change()
+        data['Lag1'] = data['Ret'].shift(1)
+        data['Lag2'] = data['Ret'].shift(2)
+        data['Lag5'] = data['Ret'].shift(5)
+        
+        # Technische Indicatoren
+        data['SMA_Dist'] = (data['Close'] - data['SMA200']) / data['SMA200']
+        data['RSI'] = data['RSI'] / 100.0 # Normaliseren naar 0-1
+        
+        # MACD (Handmatig berekenen om libs te besparen)
+        ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+        data['MACD'] = ema12 - ema26
+        
+        # Volatiliteit
+        data['Range'] = (data['High'] - data['Low']) / data['Close']
+        
+        # Volume
+        data['Vol_Rel'] = data['Volume'] / data['Volume'].rolling(20).mean()
+        
+        # Target: Stijgt het aandeel morgen?
         data['Target'] = (data['Close'].shift(-1) > data['Close']).astype(int)
         
+        # Clean Data
+        cols_to_use = ['Lag1', 'Lag2', 'Lag5', 'SMA_Dist', 'RSI', 'MACD', 'Range', 'Vol_Rel']
         data = data.dropna()
         
-        # Laatste rij is voor voorspelling van morgen
-        current_setup = data.iloc[[-1]][['SMA_Diff', 'RSI', 'Vol_Change', 'Returns']]
+        if len(data) < 100: return 50.0, "Data drop fail"
+
+        # Split Data (Time Series Split - Geen Random Shuffle!)
+        train_size = int(len(data) * 0.85)
+        train = data.iloc[:train_size]
+        test = data.iloc[train_size:] # We testen niet echt in deze loop, we trainen voor 'nu'
         
-        # Training data (Alles behalve de laatste rij)
-        X = data[['SMA_Diff', 'RSI', 'Vol_Change', 'Returns']].iloc[:-1]
-        y = data['Target'].iloc[:-1]
+        X_train = data[cols_to_use].iloc[:-1] # Alles behalve de laatste dag
+        y_train = data['Target'].iloc[:-1]
         
-        # Train Model (Random Forest is robuust en snel)
-        model = RandomForestClassifier(n_estimators=50, min_samples_split=10, random_state=42)
-        model.fit(X, y)
+        # Huidige situatie (voor morgen)
+        current_features = data[cols_to_use].iloc[[-1]]
         
-        # Voorspel kans voor morgen
-        prediction_prob = model.predict_proba(current_setup)
-        probability_up = prediction_prob[0][1] * 100 # Kans op stijging in %
+        # 2. Gradient Boosting Model (Krachtiger dan Random Forest)
+        model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
+        model.fit(X_train, y_train)
         
-        return probability_up
-    except:
-        return 50.0
+        # 3. Voorspelling
+        probs = model.predict_proba(current_features)
+        up_prob = probs[0][1] * 100
+        
+        # 4. Feature Importance (Waarom?)
+        importances = model.feature_importances_
+        feat_imp = pd.DataFrame({'Feature': cols_to_use, 'Importance': importances})
+        top_feature = feat_imp.sort_values('Importance', ascending=False).iloc[0]['Feature']
+        
+        explanation = f"Top focus: {top_feature}"
+        return up_prob, explanation
+
+    except Exception as e:
+        return 50.0, str(e)
 
 def get_smart_peers(ticker, info):
     if not info: return ["^GSPC"]
@@ -298,8 +330,8 @@ def get_zenith_data(ticker):
         stop_level = buy_level - atr_stop_dist
         target_level = buy_level + (atr_stop_dist * 2) 
         
-        # --- ML BEREKENING TOEVOEGEN ---
-        ml_prob = get_ml_probability(df)
+        # --- ML BEREKENING (PRO) ---
+        ml_prob, ml_expl = get_ml_probability_advanced(df)
         
         snip = {
             "entry_price": buy_level, 
@@ -308,7 +340,8 @@ def get_zenith_data(ticker):
             "take_profit": target_level, 
             "rr_ratio": (target_level-buy_level)/(buy_level-stop_level) if (buy_level-stop_level)>0 else 0,
             "atr": raw_atr,
-            "ml_prob": ml_prob
+            "ml_prob": ml_prob,
+            "ml_why": ml_expl
         }
         
         try: 
@@ -343,8 +376,8 @@ def generate_thesis(met, snip, ws, buys, fund):
     # Logic is nu verbeterd met ML score
     ml_high = snip['ml_prob'] > 60
     
-    if upt and zone and ml_high: th.append(f"🔥 **PERFECT:** Trend + Zone + ML ({snip['ml_prob']:.0f}% kans). {val_txt}"); sig="STERK KOPEN"
-    elif upt and zone: th.append(f"✅ **GOED:** Trend + Zone, maar ML is twijfelachtig. {val_txt}"); sig="KOPEN"
+    if upt and zone and ml_high: th.append(f"🔥 **PERFECT:** Trend + Zone + High Confidence AI ({snip['ml_prob']:.0f}%). {val_txt}"); sig="STERK KOPEN"
+    elif upt and zone: th.append(f"✅ **GOED:** Trend + Zone. AI is neutraal. {val_txt}"); sig="KOPEN"
     elif not upt and zone: th.append(f"⚠️ **RISICO:** Tegen de trend in. {val_txt}"); sig="SPECULATIEF"
     else: th.append("🛑 **AFBLIJVEN.**"); sig="AFBLIJVEN"
     
@@ -362,7 +395,7 @@ curr_sym = "$" if "USD" in st.sidebar.radio("Valuta", ["USD", "EUR"]) else "€"
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Zenith Terminal | AI-Powered")
 
-st.title("🧬 Zenith AI-Powered Terminal")
+st.title("🧠 Zenith AI: Advanced Terminal")
 mac = get_macro_data()
 cols = st.columns(5)
 for i, m in enumerate(["S&P 500", "Nasdaq", "Goud", "Olie", "10Y Rente"]):
@@ -376,14 +409,14 @@ if page == "🔎 Markt Analyse":
     with c1: tick = st.text_input("Ticker", value=st.session_state['selected_ticker'], on_change=reset_analysis).upper()
     with c2: cap = st.number_input(f"Kapitaal ({curr_sym})", 10000)
     
-    if st.button("Start AI Analysis"): st.session_state['analysis_active'] = True; st.session_state['selected_ticker'] = tick
+    if st.button("Start Advanced AI Analysis"): st.session_state['analysis_active'] = True; st.session_state['selected_ticker'] = tick
     
     if st.session_state['analysis_active']:
         df, met, fund, ws, _, snip, _, err, peers = get_zenith_data(st.session_state['selected_ticker'])
         
         if err: st.error(f"⚠️ {err}")
         elif df is not None:
-            with st.spinner('AI modellen draaien...'): buys, news = get_external_info(tick)
+            with st.spinner('Gradient Boosting Model trainen...'): buys, news = get_external_info(tick)
             
             # SCORE MET ML INTEGRATIE
             score = 0
@@ -402,10 +435,10 @@ if page == "🔎 Markt Analyse":
             
             # ML GAUGE
             ml_color = "green" if snip['ml_prob']>60 else "orange" if snip['ml_prob']>50 else "red"
-            k2.metric("🧠 ML Kans (AI)", f":{ml_color}[{snip['ml_prob']:.1f}%]", help="Kans dat prijs morgen hoger sluit (Random Forest)")
+            k2.metric("🧠 AI Confidence", f":{ml_color}[{snip['ml_prob']:.1f}%]", help="Model: Gradient Boosting Classifier")
             
             k3.metric("Prijs", f"{curr_sym}{met['price']:.2f}")
-            k4.markdown(f"**Advies:** {sig}")
+            k4.markdown(f"**AI Focus:** `{snip['ml_why']}`")
 
             st.info(f"**Zenith Thesis:** {thesis}")
             
@@ -419,7 +452,6 @@ if page == "🔎 Markt Analyse":
             rr_c = "green" if snip['rr_ratio']>=2 else "orange"
             s4.markdown(f"**4. R/R:** :{rr_c}[1 : {snip['rr_ratio']:.1f}]")
             
-            # CHARTS EN TABS (Gelijk gebleven, maar wel data beschikbaar)
             st.subheader("📈 Technical Chart")
             end = df.index[-1]; start = end - pd.DateOffset(years=1); plot_df = df.loc[start:end]
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6,0.2,0.2])
@@ -434,7 +466,6 @@ if page == "🔎 Markt Analyse":
             fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False); st.plotly_chart(fig, use_container_width=True)
             
             t1, t2, t3, t4 = st.tabs(["⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
-            # (Tabs content is identiek aan vorige versie, hier ingekort voor brevity maar functionaliteit blijft)
             with t1:
                 if peers:
                     if st.button("Laad Vergelijking"):
@@ -462,7 +493,6 @@ if page == "🔎 Markt Analyse":
 # --- PAGINA 2: PORTFOLIO MANAGER ---
 elif page == "💼 Mijn Portfolio":
     st.title("💼 Portfolio Manager")
-    # (Portfolio logic blijft identiek, hier ingekort)
     with st.expander("➕ Toevoegen", expanded=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
         with c1: t = st.text_input("Ticker", key="pt").upper()
@@ -476,10 +506,10 @@ elif page == "💼 Mijn Portfolio":
         st.write(pd.DataFrame(st.session_state['portfolio']))
         if st.button("Wissen"): st.session_state['portfolio'] = []; st.rerun()
 
-# --- PAGINA 3: DEEP SCANNER (MET ML) ---
+# --- PAGINA 3: DEEP SCANNER (MET PRO ML) ---
 elif page == "📡 Deep Scanner":
     st.title("📡 AI Opportunity Finder")
-    st.markdown("Scanner zoekt setups én berekent ML waarschijnlijkheid.")
+    st.markdown("Scanner zoekt setups én berekent Gradient Boosting waarschijnlijkheid.")
     
     pre = st.selectbox("Selecteer Markt", list(PRESETS.keys()))
     
@@ -508,7 +538,7 @@ elif page == "📡 Deep Scanner":
 
         for i, t in enumerate(lst):
             bar.progress((i+1)/len(lst))
-            stat.text(f"AI Training: {t}...")
+            stat.text(f"Machine Learning: {t}...")
             
             try:
                 df, met, fund, ws, _, snip, _, err, _ = get_zenith_data(t)
@@ -517,7 +547,7 @@ elif page == "📡 Deep Scanner":
                     # SCORING MET AI
                     sc = 0; reasons = []
                     
-                    # 1. AI PROBABILITY (Het belangrijkst)
+                    # 1. AI PROBABILITY (Gradient Boosting)
                     ml_prob = snip['ml_prob']
                     if ml_prob > 60: sc += 40; reasons.append(f"🤖 AI Bullish ({ml_prob:.0f}%)")
                     elif ml_prob < 40: sc -= 20; reasons.append(f"🤖 AI Bearish ({ml_prob:.0f}%)")
@@ -536,6 +566,7 @@ elif page == "📡 Deep Scanner":
                             "Ticker": t, 
                             "Prijs": met['price'], 
                             "AI Kans": f"{ml_prob:.1f}%",
+                            "Waarom?": snip['ml_why'],
                             "Buy Order": snip['entry_price'],
                             "Score": sc, 
                             "Setup": ", ".join(reasons)
@@ -562,4 +593,4 @@ elif page == "📡 Deep Scanner":
 # --- PAGINA 4: BASICS ---
 elif page == "🎓 Leer de Basics":
     st.title("🎓 Zenith Academy: AI Edition")
-    st.write("De 'AI Kans' percentage komt van een Random Forest algoritme dat live op jouw PC wordt getraind op historische data van het specifieke aandeel.")
+    st.write("Jouw model is nu geupgrade naar **Gradient Boosting**. Het kijkt naar historische RSI, MACD, Volume en Volatiliteit patronen om de toekomst te voorspellen.")
