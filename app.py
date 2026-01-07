@@ -19,7 +19,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v26.1 Full", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v27 PRO", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
 # --- DISCLAIMER & CREDITS ---
@@ -58,10 +58,309 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# --- ANALYSE FUNCTIES ---
+# ============================================
+# ENHANCED TRADING FUNCTIONS
+# ============================================
+
+def calculate_advanced_atr(df, period=14):
+    """Berekent ATR met meerdere stop loss niveaus"""
+    try:
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        atr = true_range.rolling(period).mean().iloc[-1]
+        
+        current_price = df['Close'].iloc[-1]
+        
+        return {
+            'atr_value': atr,
+            'tight_stop': current_price - (atr * 1.5),
+            'normal_stop': current_price - (atr * 2.0),
+            'wide_stop': current_price - (atr * 3.0),
+            'volatility': (atr / current_price) * 100
+        }
+    except:
+        return {'atr_value': 0, 'tight_stop': 0, 'normal_stop': 0, 'wide_stop': 0, 'volatility': 0}
+
+def calculate_entry_zones(df):
+    """Berekent meerdere strategische entry punten"""
+    try:
+        close = df['Close']
+        high = df['High']
+        low = df['Low']
+        
+        # Bollinger Bands
+        sma20 = close.rolling(20).mean()
+        std20 = close.rolling(20).std()
+        bb_lower = sma20 - (std20 * 2)
+        bb_upper = sma20 + (std20 * 2)
+        
+        # Support/Resistance zones
+        recent_prices = close.tail(100)
+        support_levels = []
+        resistance_levels = []
+        
+        for i in range(5, len(recent_prices) - 5):
+            if recent_prices.iloc[i] == recent_prices.iloc[i-5:i+6].min():
+                support_levels.append(recent_prices.iloc[i])
+            if recent_prices.iloc[i] == recent_prices.iloc[i-5:i+6].max():
+                resistance_levels.append(recent_prices.iloc[i])
+        
+        # Cluster support levels
+        def cluster_levels(levels):
+            if not levels:
+                return []
+            levels = sorted(levels)
+            clusters = [[levels[0]]]
+            for level in levels[1:]:
+                if abs(level - clusters[-1][-1]) / clusters[-1][-1] < 0.02:
+                    clusters[-1].append(level)
+                else:
+                    clusters.append([level])
+            return [np.mean(cluster) for cluster in clusters]
+        
+        support_zones = cluster_levels(support_levels)
+        resistance_zones = cluster_levels(resistance_levels)
+        
+        # Fibonacci Retracement
+        recent_high = high.tail(100).max()
+        recent_low = low.tail(100).min()
+        diff = recent_high - recent_low
+        
+        fib_618 = recent_high - (diff * 0.618)  # Golden ratio
+        fib_500 = recent_high - (diff * 0.500)
+        fib_382 = recent_high - (diff * 0.382)
+        
+        current_price = close.iloc[-1]
+        
+        return {
+            'current_price': current_price,
+            'bb_entry': bb_lower.iloc[-1],
+            'bb_upper': bb_upper.iloc[-1],
+            'nearest_support': min(support_zones, key=lambda x: abs(x - current_price)) if support_zones else None,
+            'nearest_resistance': min(resistance_zones, key=lambda x: abs(x - current_price)) if resistance_zones else None,
+            'fib_618': fib_618,
+            'fib_500': fib_500,
+            'fib_382': fib_382,
+            'support_zones': support_zones[-3:] if len(support_zones) >= 3 else support_zones,
+            'resistance_zones': resistance_zones[:3] if len(resistance_zones) >= 3 else resistance_zones
+        }
+    except:
+        return {}
+
+def calculate_take_profit_levels(entry_price, stop_loss_price, df):
+    """Berekent meerdere take profit targets"""
+    try:
+        risk = entry_price - stop_loss_price
+        
+        # R-Multiple targets
+        tp1 = entry_price + (risk * 1.5)
+        tp2 = entry_price + (risk * 2.0)
+        tp3 = entry_price + (risk * 3.0)
+        
+        # Recent highs
+        swing_high_50d = df['High'].tail(50).max()
+        swing_high_100d = df['High'].tail(100).max()
+        
+        # Fibonacci Extensions
+        recent_high = df['High'].tail(100).max()
+        recent_low = df['Low'].tail(100).min()
+        diff = recent_high - recent_low
+        fib_ext_618 = recent_high + (diff * 0.618)
+        
+        return {
+            'tp1': tp1,
+            'tp2': tp2,
+            'tp3': tp3,
+            'swing_high_50d': swing_high_50d,
+            'swing_high_100d': swing_high_100d,
+            'fib_extension_618': fib_ext_618
+        }
+    except:
+        return {'tp1': 0, 'tp2': 0, 'tp3': 0}
+
+def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss_price):
+    """Smart position sizing met risk management"""
+    risk_amount = account_balance * (risk_pct / 100)
+    risk_per_share = entry_price - stop_loss_price
+    
+    if risk_per_share <= 0:
+        return {'error': 'Stop loss moet onder entry price'}
+    
+    shares = int(risk_amount / risk_per_share)
+    total_investment = shares * entry_price
+    
+    # Max 20% van account per positie
+    max_position = account_balance * 0.20
+    if total_investment > max_position:
+        shares = int(max_position / entry_price)
+        total_investment = shares * entry_price
+    
+    return {
+        'shares': shares,
+        'total_investment': total_investment,
+        'risk_amount': risk_amount,
+        'position_size_pct': (total_investment / account_balance) * 100
+    }
+
+def score_entry_opportunity(df, current_price):
+    """Geeft entry opportunity score 0-100"""
+    try:
+        score = 0
+        signals = []
+        
+        # Technical indicators
+        sma200 = df['Close'].rolling(200).mean().iloc[-1]
+        sma50 = df['Close'].rolling(50).mean().iloc[-1]
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi = (100 - (100 / (1 + rs))).iloc[-1]
+        
+        # MACD
+        exp1 = df['Close'].ewm(span=12).mean()
+        exp2 = df['Close'].ewm(span=26).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=9).mean()
+        macd_cross = macd.iloc[-1] > signal_line.iloc[-1]
+        
+        # Volume
+        avg_volume = df['Volume'].tail(20).mean()
+        current_volume = df['Volume'].iloc[-1]
+        volume_surge = current_volume > avg_volume * 1.5
+        
+        # Entry zones
+        zones = calculate_entry_zones(df)
+        
+        # Scoring
+        if current_price > sma200:
+            score += 15
+            signals.append("✅ Boven 200MA (Bullish)")
+        if current_price > sma50:
+            score += 10
+            signals.append("✅ Boven 50MA")
+        
+        if rsi < 30:
+            score += 20
+            signals.append("🔥 RSI Oversold (<30)")
+        elif rsi < 40:
+            score += 10
+            signals.append("📉 RSI Laag (<40)")
+        
+        if zones.get('nearest_support'):
+            near_support = abs(current_price - zones['nearest_support']) / current_price < 0.02
+            if near_support:
+                score += 15
+                signals.append(f"💎 Bij Support (€{zones['nearest_support']:.2f})")
+        
+        if zones.get('fib_618'):
+            near_fib = abs(current_price - zones['fib_618']) / current_price < 0.02
+            if near_fib:
+                score += 10
+                signals.append(f"🎯 Fib 0.618 Zone")
+        
+        if macd_cross:
+            score += 10
+            signals.append("📈 MACD Bullish Cross")
+        
+        if volume_surge:
+            score += 5
+            signals.append("📊 Volume Surge")
+        
+        return {
+            'score': min(score, 100),
+            'signals': signals,
+            'recommendation': 'STERK KOPEN' if score >= 75 else 'KOPEN' if score >= 60 else 'AFWACHTEN' if score >= 40 else 'NIET KOPEN'
+        }
+    except:
+        return {'score': 0, 'signals': [], 'recommendation': 'ERROR'}
+
+def generate_complete_trade_setup(ticker, df, account_balance, risk_pct=1.0):
+    """Genereert complete trade setup"""
+    try:
+        current_price = df['Close'].iloc[-1]
+        
+        # Alle analyses
+        entry_zones = calculate_entry_zones(df)
+        atr_data = calculate_advanced_atr(df)
+        scoring = score_entry_opportunity(df, current_price)
+        
+        # Beste entry kiezen
+        entry_options = []
+        
+        if entry_zones.get('nearest_support'):
+            entry_options.append(('Support', entry_zones['nearest_support']))
+        
+        if entry_zones.get('fib_618'):
+            entry_options.append(('Fib 0.618', entry_zones['fib_618']))
+        
+        entry_options.append(('Bollinger', entry_zones.get('bb_entry', current_price * 0.98)))
+        
+        # Kies entry onder current price
+        valid_entries = [e for e in entry_options if e[1] < current_price]
+        if valid_entries:
+            best_entry = min(valid_entries, key=lambda x: current_price - x[1])
+        else:
+            best_entry = ('Current -2%', current_price * 0.98)
+        
+        entry_price = best_entry[1]
+        entry_method = best_entry[0]
+        
+        # Stop loss
+        stop_loss = atr_data['normal_stop']
+        
+        # Take profits
+        tp_levels = calculate_take_profit_levels(entry_price, stop_loss, df)
+        
+        # Position sizing
+        position = calculate_position_size(account_balance, risk_pct, entry_price, stop_loss)
+        
+        if 'error' in position:
+            return position
+        
+        # Risk/Reward
+        risk_per_share = entry_price - stop_loss
+        reward = tp_levels['tp2'] - entry_price
+        rr_ratio = reward / risk_per_share if risk_per_share > 0 else 0
+        
+        return {
+            'ticker': ticker,
+            'current_price': current_price,
+            'entry_price': entry_price,
+            'entry_method': entry_method,
+            'distance_to_entry': ((current_price - entry_price) / current_price) * 100,
+            'stop_loss': stop_loss,
+            'stop_loss_tight': atr_data['tight_stop'],
+            'stop_loss_wide': atr_data['wide_stop'],
+            'stop_loss_pct': ((entry_price - stop_loss) / entry_price) * 100,
+            'atr_value': atr_data['atr_value'],
+            'volatility': atr_data['volatility'],
+            'tp1': tp_levels['tp1'],
+            'tp2': tp_levels['tp2'],
+            'tp3': tp_levels['tp3'],
+            'rr_ratio': rr_ratio,
+            'shares': position['shares'],
+            'total_investment': position['total_investment'],
+            'position_size_pct': position['position_size_pct'],
+            'risk_amount': position['risk_amount'],
+            'score': scoring['score'],
+            'signals': scoring['signals'],
+            'recommendation': scoring['recommendation'],
+            'support_zones': entry_zones.get('support_zones', []),
+            'resistance_zones': entry_zones.get('resistance_zones', []),
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+# --- ORIGINELE FUNCTIES (behouden) ---
 
 def get_financial_trends(ticker):
-    """Haalt omzet en winst trends op voor de laatste 4 jaar."""
     try:
         s = yf.Ticker(ticker)
         f = s.financials.T
@@ -71,18 +370,6 @@ def get_financial_trends(ticker):
         df.index = df.index.year
         return df.sort_index()
     except: return None
-
-def calculate_atr_stop(df, multiplier=2):
-    """Berekent een Stop Loss op basis van de beweeglijkheid (ATR)."""
-    try:
-        high_low = df['High'] - df['Low']
-        high_close = np.abs(df['High'] - df['Close'].shift())
-        low_close = np.abs(df['Low'] - df['Close'].shift())
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = np.max(ranges, axis=1)
-        atr = true_range.rolling(14).mean().iloc[-1]
-        return atr * multiplier
-    except: return 0.0
 
 def get_smart_peers(ticker, info):
     if not info: return ["^GSPC"]
@@ -124,6 +411,7 @@ def run_backtest(ticker, period="5y"):
         df['SMA200'] = df['Close'].rolling(200).mean()
         delta = df['Close'].diff(); gain = (delta.where(delta>0,0)).rolling(14).mean(); loss = (-delta.where(delta<0,0)).rolling(14).mean()
         df['RSI'] = 100-(100/(1+(gain/loss)))
+        
         balance=10000; shares=0; trades=[]; in_pos=False
         for i in range(201, len(df)):
             p = df['Close'].iloc[i]; rsi = df['RSI'].iloc[i]; sma = df['SMA200'].iloc[i]
@@ -217,19 +505,6 @@ def get_zenith_data(ticker):
         delta = df['Close'].diff(); rs = (delta.where(delta>0,0).rolling(14).mean()) / (-delta.where(delta<0,0).rolling(14).mean())
         df['RSI'] = 100-(100/(1+rs))
         
-        # NIEUW: ATR Based Stop Loss
-        atr_val = calculate_atr_stop(df)
-        ent = df['L'].iloc[-1] if not pd.isna(df['L'].iloc[-1]) else cur
-        high = df['High'].tail(50).max()
-        
-        snip = {
-            "entry_price": ent, 
-            "current_diff": ((cur-ent)/cur)*100, 
-            "stop_loss": cur - atr_val,
-            "take_profit": high, 
-            "rr_ratio": (high-ent)/(atr_val) if atr_val>0 else 0 
-        }
-        
         try: 
             m = yf.Ticker("^GSPC").history(period="7y")
             ma = m['Close'].reindex(df.index, method='nearest')
@@ -238,7 +513,7 @@ def get_zenith_data(ticker):
         
         peers = get_smart_peers(ticker, i)
         met = {"name": i.get('longName', ticker), "price": cur, "sma200": df['SMA200'].iloc[-1], "rsi": df['RSI'].iloc[-1], "bull": mb}
-        return df, met, fund, ws, None, snip, None, None, peers
+        return df, met, fund, ws, None, None, None, None, peers
     except Exception as e: return None, None, None, None, None, None, None, str(e), None
 
 def get_external_info(ticker):
@@ -251,34 +526,21 @@ def get_external_info(ticker):
         return b, n
     except: return 0, []
 
-def generate_thesis(met, snip, ws, buys, fund):
-    th = []; sig = "NEUTRAAL"
-    upt = met['price']>met['sma200']; zone = snip['current_diff']<1.5 
-    val_txt = ""
-    if fund['fair_value']:
-        if met['price'] < fund['fair_value'] * 0.8: val_txt = "💎 **VALUE:** Aandeel is goedkoop."
-        elif met['price'] > fund['fair_value'] * 1.2: val_txt = "⚠️ **WAARDE:** Aandeel is duur."
-    
-    if upt and zone: th.append(f"🔥 **PERFECT:** Trend Bullish + Buy Zone. {val_txt}"); sig="STERK KOPEN"
-    elif not upt and zone: th.append(f"⚠️ **RISICO:** Trend Bearish + Buy Zone. {val_txt}"); sig="SPECULATIEF"
-    elif upt and not zone: th.append(f"✅ **HOUDEN:** Wacht op dip. {val_txt}"); sig="HOUDEN"
-    else: th.append("🛑 **AFBLIJVEN.**"); sig="AFBLIJVEN"
-    if ws['upside']>15: th.append(f"Analisten: {ws['upside']:.0f}% upside.")
-    return " ".join(th), sig
-
 # --- UI START ---
 st.sidebar.header("Navigatie")
 page = st.sidebar.radio("Ga naar:", ["🔎 Markt Analyse", "💼 Mijn Portfolio", "📡 Deep Scanner", "🎓 Leer de Basics"], key="nav_page")
 
-with st.sidebar.expander("🧮 Calculator"):
-    acc=st.number_input("Acc",10000); risk=st.slider("Risico",0.5,5.0,1.0); ent=st.number_input("In",100.0); stp=st.number_input("Stop",95.0)
-    if stp<ent: st.write(f"**Koop:** {int((acc*(risk/100))/(ent-stp))} stuks")
+with st.sidebar.expander("🧮 Enhanced Calculator"):
+    acc = st.number_input("Account Balance", 10000, step=1000)
+    risk = st.slider("Risk %", 0.5, 5.0, 1.0, 0.1)
+    st.caption("💡 Professionals riskeren 0.5-2% per trade")
+
 curr_sym = "$" if "USD" in st.sidebar.radio("Valuta", ["USD", "EUR"]) else "€"
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
-st.title("💎 Zenith Institutional Terminal")
+st.title("💎 Zenith PRO Terminal v27")
 mac = get_macro_data()
 cols = st.columns(5)
 for i, m in enumerate(["S&P 500", "Nasdaq", "Goud", "Olie", "10Y Rente"]):
@@ -286,104 +548,234 @@ for i, m in enumerate(["S&P 500", "Nasdaq", "Goud", "Olie", "10Y Rente"]):
     cols[i].metric(m, f"{v:.2f}", f"{ch:.2f}%")
 st.markdown("---")
 
-# --- PAGINA 1: MARK ANALYSE ---
+# --- PAGINA 1: MARK ANALYSE (ENHANCED) ---
 if page == "🔎 Markt Analyse":
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns([2, 2, 1])
     with c1: tick = st.text_input("Ticker", value=st.session_state['selected_ticker'], on_change=reset_analysis).upper()
-    with c2: cap = st.number_input(f"Kapitaal ({curr_sym})", 10000)
+    with c2: cap = st.number_input(f"Account ({curr_sym})", acc)
+    with c3: risk_pct = st.number_input("Risk %", 0.5, 5.0, risk, 0.1)
     
-    if st.button("Start Deep Analysis"): st.session_state['analysis_active'] = True; st.session_state['selected_ticker'] = tick
+    if st.button("🚀 Start PRO Analysis"): 
+        st.session_state['analysis_active'] = True
+        st.session_state['selected_ticker'] = tick
     
     if st.session_state['analysis_active']:
-        df, met, fund, ws, _, snip, _, err, peers = get_zenith_data(st.session_state['selected_ticker'])
+        df, met, fund, ws, _, _, _, err, peers = get_zenith_data(st.session_state['selected_ticker'])
         
-        if err: st.error(f"⚠️ {err}")
+        if err: 
+            st.error(f"⚠️ {err}")
         elif df is not None:
-            with st.spinner('Analyseren...'): buys, news = get_external_info(tick)
+            with st.spinner('Deep Learning Analysis...'): 
+                buys, news = get_external_info(tick)
+                trade_setup = generate_complete_trade_setup(tick, df, cap, risk_pct)
             
-            score = 50 
-            if met['price']>met['sma200']: score+=20
-            if met['rsi']<35: score+=15
-            if fund['fair_value'] and met['price'] < fund['fair_value']: score += 15
-            
-            thesis, sig = generate_thesis(met, snip, ws, buys, fund)
-            
-            st.markdown(f"## 🏢 {met['name']} ({tick})")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Score", f"{score}/100")
-            clr = "green" if "KOPEN" in sig else "orange" if "SPEC" in sig else "red" if "AFBL" in sig else "blue"
-            k2.markdown(f"**Advies:** :{clr}[{sig}]")
-            k3.metric("Prijs", f"{curr_sym}{met['price']:.2f}")
-            if fund['fair_value']:
-                diff_fair = ((fund['fair_value'] - met['price']) / met['price']) * 100
-                k4.metric("Fair Value", f"{curr_sym}{fund['fair_value']:.2f}", f"{diff_fair:.1f}%")
-            else: k4.metric("Fair Value", "N/A", "Verlieslatend")
-
-            st.info(f"**Zenith Thesis:** {thesis}")
-            
-            st.markdown("---")
-            # NIEUWE SNIPER LAYOUT MET ATR
-            st.subheader("🎯 Sniper Entry Setup (ATR Volatiliteit)")
-            s1, s2, s3, s4 = st.columns(4)
-            msg = "✅ NU KOPEN!" if snip['current_diff'] < 1.5 else f"Wacht (-{snip['current_diff']:.1f}%)"
-            s1.metric("1. Entry (Ideaal)", f"{curr_sym}{snip['entry_price']:.2f}", msg)
-            s2.metric("2. Stop Loss (ATR)", f"{curr_sym}{snip['stop_loss']:.2f}")
-            s3.metric("3. Take Profit", f"{curr_sym}{snip['take_profit']:.2f}")
-            rr_c = "green" if snip['rr_ratio']>=2 else "orange"
-            s4.markdown(f"**4. Risk/Reward:** :{rr_c}[1 : {snip['rr_ratio']:.1f}]")
-            
-            # NIEUWE FUNDAMENTELE CHART
-            st.subheader("📊 Fundamentele Trends (4 Jaar)")
-            fin_df = get_financial_trends(tick)
-            if fin_df is not None:
-                f_fig = px.bar(fin_df, barmode='group', template="plotly_dark", color_discrete_sequence=['#636EFA', '#00CC96'])
-                st.plotly_chart(f_fig, use_container_width=True)
-            else: st.warning("Geen fundamentele data beschikbaar.")
-
-            st.subheader("📈 Technical Chart")
-            end = df.index[-1]; start = end - pd.DateOffset(years=1); plot_df = df.loc[start:end]
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6,0.2,0.2])
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['L'], line=dict(color='rgba(0,255,0,0.3)'), name="Lower Band"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['U'], line=dict(color='rgba(255,0,0,0.3)'), fill='tonexty', fillcolor='rgba(128,128,128,0.1)', name="Upper Band"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], line=dict(color='#FFD700'), name="200MA"), row=1, col=1)
-            if 'M' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['M'], line=dict(color='white', width=1, dash='dot'), name="S&P500"), row=1, col=1)
-            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name="Prijs"), row=1, col=1)
-            clrs = ['green' if r['Open']<r['Close'] else 'red' for i,r in plot_df.iterrows()]
-            fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], marker_color=clrs, name="Vol"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], line=dict(color='#9370DB'), name="RSI"), row=3, col=1)
-            fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1); fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-            fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False); st.plotly_chart(fig, use_container_width=True)
-            
-            t1, t2, t3, t4 = st.tabs(["⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
-            with t1:
-                st.subheader("Competitie Check")
-                if peers:
-                    st.write(f"Automatisch vergeleken met: {', '.join(peers)}")
-                    if st.button("Laad Vergelijking"):
-                        pd_data = compare_peers(tick, peers)
-                        if pd_data is not None: st.line_chart(pd_data)
-                        else: st.error("Geen data.")
-                else: st.warning("Geen concurrenten gevonden.")
-            with t2:
-                if st.button("🚀 Draai Backtest"):
-                    res = run_backtest(tick)
-                    if isinstance(res, str): st.error(res)
-                    else:
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Strategy", f"{res['return']:.1f}%"); c2.metric("Buy&Hold", f"{res['bh_return']:.1f}%"); c3.metric("Trades", res['trades'])
-                        st.line_chart(res['history']['Close'])
-            with t3:
-                if st.button("🔮 Simulatie"):
-                    sims = run_monte_carlo(tick)
-                    if sims is not None:
-                        f = go.Figure()
-                        for i in range(50): f.add_trace(go.Scatter(y=sims[i], mode='lines', line=dict(width=1, color='rgba(0,255,255,0.1)'), showlegend=False))
-                        f.add_trace(go.Scatter(y=np.mean(sims,axis=0), mode='lines', line=dict(width=3, color='yellow'), name='Avg'))
-                        f.update_layout(template="plotly_dark"); st.plotly_chart(f, use_container_width=True)
-            with t4:
-                for n in news:
-                    c = "green" if n['sentiment']=="POSITIVE" else "red" if n['sentiment']=="NEGATIVE" else "gray"
-                    st.markdown(f":{c}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
+            if 'error' in trade_setup:
+                st.error(f"Setup Error: {trade_setup['error']}")
+            else:
+                # HEADER
+                st.markdown(f"## 🏢 {met['name']} ({tick})")
+                
+                # TOP METRICS
+                k1, k2, k3, k4, k5 = st.columns(5)
+                k1.metric("AI Score", f"{trade_setup['score']}/100")
+                
+                sig_color = "green" if "KOPEN" in trade_setup['recommendation'] else "orange" if "AFWACH" in trade_setup['recommendation'] else "red"
+                k2.markdown(f"**Signal:** :{sig_color}[{trade_setup['recommendation']}]")
+                
+                k3.metric("Prijs", f"{curr_sym}{trade_setup['current_price']:.2f}")
+                k4.metric("Volatility", f"{trade_setup['volatility']:.2f}%")
+                
+                if fund['fair_value']:
+                    diff_fair = ((fund['fair_value'] - met['price']) / met['price']) * 100
+                    k5.metric("Fair Value", f"{curr_sym}{fund['fair_value']:.2f}", f"{diff_fair:.1f}%")
+                else: 
+                    k5.metric("Fair Value", "N/A", "Loss Making")
+                
+                # SIGNALS
+                if trade_setup['signals']:
+                    st.info("**🎯 Entry Signals:** " + " | ".join(trade_setup['signals']))
+                
+                st.markdown("---")
+                
+                # === NIEUWE PRO TRADE SETUP ===
+                st.subheader("🎯 Professional Trade Setup")
+                
+                # Entry Zone
+                st.markdown("### 1️⃣ ENTRY STRATEGIE")
+                e1, e2, e3 = st.columns(3)
+                
+                entry_status = "🟢 KOOP NU" if trade_setup['distance_to_entry'] < 1 else f"🟡 Wacht op dip -{trade_setup['distance_to_entry']:.1f}%"
+                e1.metric("Entry Prijs", f"{curr_sym}{trade_setup['entry_price']:.2f}", entry_status)
+                e2.metric("Entry Methode", trade_setup['entry_method'])
+                e3.metric("Afstand tot Entry", f"{trade_setup['distance_to_entry']:.2f}%")
+                
+                # Stop Loss Opties
+                st.markdown("### 2️⃣ STOP LOSS LEVELS")
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("🔴 Tight Stop", f"{curr_sym}{trade_setup['stop_loss_tight']:.2f}", "-1.5 ATR")
+                s2.metric("🟠 Normal Stop", f"{curr_sym}{trade_setup['stop_loss']:.2f}", "-2.0 ATR ✅")
+                s3.metric("🟢 Wide Stop", f"{curr_sym}{trade_setup['stop_loss_wide']:.2f}", "-3.0 ATR")
+                s4.metric("Stop Loss %", f"{trade_setup['stop_loss_pct']:.2f}%")
+                
+                st.caption("💡 **Kies je stop:** Tight = Day traders | Normal = Swing traders | Wide = Position traders")
+                
+                # Take Profit Ladder
+                st.markdown("### 3️⃣ TAKE PROFIT LADDER")
+                t1, t2, t3 = st.columns(3)
+                
+                profit_tp1 = ((trade_setup['tp1'] - trade_setup['entry_price']) / trade_setup['entry_price']) * 100
+                profit_tp2 = ((trade_setup['tp2'] - trade_setup['entry_price']) / trade_setup['entry_price']) * 100
+                profit_tp3 = ((trade_setup['tp3'] - trade_setup['entry_price']) / trade_setup['entry_price']) * 100
+                
+                t1.metric("TP1 (1/3 uit)", f"{curr_sym}{trade_setup['tp1']:.2f}", f"+{profit_tp1:.1f}%")
+                t2.metric("TP2 (1/3 uit)", f"{curr_sym}{trade_setup['tp2']:.2f}", f"+{profit_tp2:.1f}%")
+                t3.metric("TP3 (1/3 trailing)", f"{curr_sym}{trade_setup['tp3']:.2f}", f"+{profit_tp3:.1f}%")
+                
+                rr_color = "green" if trade_setup['rr_ratio'] >= 2 else "orange" if trade_setup['rr_ratio'] >= 1.5 else "red"
+                st.markdown(f"**Risk/Reward Ratio:** :{rr_color}[1 : {trade_setup['rr_ratio']:.2f}]")
+                st.caption("🎯 **Strategie:** Verkoop 1/3 bij elk TP level. Beweeg stop naar break-even na TP1.")
+                
+                # Position Sizing
+                st.markdown("### 4️⃣ POSITION SIZING")
+                p1, p2, p3, p4 = st.columns(4)
+                p1.metric("Aantal Aandelen", f"{trade_setup['shares']}")
+                p2.metric("Totale Investering", f"{curr_sym}{trade_setup['total_investment']:.2f}")
+                p3.metric("Max Verlies", f"{curr_sym}{trade_setup['risk_amount']:.2f}")
+                p4.metric("% van Account", f"{trade_setup['position_size_pct']:.1f}%")
+                
+                if trade_setup['position_size_pct'] > 20:
+                    st.warning("⚠️ Positie >20% van account. Overweeg risico te verlagen.")
+                elif trade_setup['rr_ratio'] < 1.5:
+                    st.warning("⚠️ Risk/Reward <1.5. Niet ideaal voor deze setup.")
+                else:
+                    st.success("✅ Positie-grootte en R/R zijn goed!")
+                
+                # Support/Resistance Zones
+                if trade_setup.get('support_zones') or trade_setup.get('resistance_zones'):
+                    st.markdown("### 📊 Key Price Zones")
+                    z1, z2 = st.columns(2)
+                    
+                    if trade_setup.get('support_zones'):
+                        with z1:
+                            st.markdown("**🟢 Support Zones**")
+                            for i, sup in enumerate(trade_setup['support_zones'], 1):
+                                st.write(f"{i}. {curr_sym}{sup:.2f}")
+                    
+                    if trade_setup.get('resistance_zones'):
+                        with z2:
+                            st.markdown("**🔴 Resistance Zones**")
+                            for i, res in enumerate(trade_setup['resistance_zones'], 1):
+                                st.write(f"{i}. {curr_sym}{res:.2f}")
+                
+                st.markdown("---")
+                
+                # FUNDAMENTALS
+                st.subheader("📊 Fundamentals")
+                fin_df = get_financial_trends(tick)
+                if fin_df is not None:
+                    f_fig = px.bar(fin_df, barmode='group', template="plotly_dark", 
+                                   color_discrete_sequence=['#636EFA', '#00CC96'])
+                    st.plotly_chart(f_fig, use_container_width=True)
+                else: 
+                    st.warning("Geen fundamentele data")
+                
+                # TECHNICAL CHART
+                st.subheader("📈 Technical Chart")
+                end = df.index[-1]
+                start = end - pd.DateOffset(years=1)
+                plot_df = df.loc[start:end]
+                
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6,0.2,0.2])
+                
+                # Bollinger Bands
+                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['L'], 
+                                        line=dict(color='rgba(0,255,0,0.3)'), name="Lower Band"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['U'], 
+                                        line=dict(color='rgba(255,0,0,0.3)'), fill='tonexty', 
+                                        fillcolor='rgba(128,128,128,0.1)', name="Upper Band"), row=1, col=1)
+                
+                # Moving Averages
+                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SMA200'], 
+                                        line=dict(color='#FFD700'), name="200MA"), row=1, col=1)
+                
+                # S&P500 comparison
+                if 'M' in plot_df.columns: 
+                    fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['M'], 
+                                            line=dict(color='white', width=1, dash='dot'), name="S&P500"), row=1, col=1)
+                
+                # Price (Candlestick)
+                fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], 
+                                            high=plot_df['High'], low=plot_df['Low'], 
+                                            close=plot_df['Close'], name="Prijs"), row=1, col=1)
+                
+                # Entry/Stop/TP lines
+                fig.add_hline(y=trade_setup['entry_price'], line_dash="dash", 
+                             line_color="yellow", annotation_text="Entry", row=1, col=1)
+                fig.add_hline(y=trade_setup['stop_loss'], line_dash="dash", 
+                             line_color="red", annotation_text="Stop", row=1, col=1)
+                fig.add_hline(y=trade_setup['tp2'], line_dash="dash", 
+                             line_color="green", annotation_text="TP2", row=1, col=1)
+                
+                # Volume
+                clrs = ['green' if r['Open']<r['Close'] else 'red' for i,r in plot_df.iterrows()]
+                fig.add_trace(go.Bar(x=plot_df.index, y=plot_df['Volume'], 
+                                    marker_color=clrs, name="Vol"), row=2, col=1)
+                
+                # RSI
+                fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['RSI'], 
+                                        line=dict(color='#9370DB'), name="RSI"), row=3, col=1)
+                fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
+                fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
+                
+                fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # TABS
+                t1, t2, t3, t4 = st.tabs(["⚔️ Peer Battle", "🔙 Backtest", "🔮 Monte Carlo", "📰 Nieuws"])
+                
+                with t1:
+                    st.subheader("Competitie Check")
+                    if peers:
+                        st.write(f"Vergeleken met: {', '.join(peers)}")
+                        if st.button("Laad Vergelijking"):
+                            pd_data = compare_peers(tick, peers)
+                            if pd_data is not None: 
+                                st.line_chart(pd_data)
+                            else: 
+                                st.error("Geen data")
+                    else: 
+                        st.warning("Geen peers")
+                
+                with t2:
+                    if st.button("🚀 Draai Backtest"):
+                        res = run_backtest(tick)
+                        if isinstance(res, str): 
+                            st.error(res)
+                        else:
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Strategy", f"{res['return']:.1f}%")
+                            c2.metric("Buy&Hold", f"{res['bh_return']:.1f}%")
+                            c3.metric("Trades", res['trades'])
+                            st.line_chart(res['history']['Close'])
+                
+                with t3:
+                    if st.button("🔮 Simulatie"):
+                        sims = run_monte_carlo(tick)
+                        if sims is not None:
+                            f = go.Figure()
+                            for i in range(50): 
+                                f.add_trace(go.Scatter(y=sims[i], mode='lines', 
+                                                      line=dict(width=1, color='rgba(0,255,255,0.1)'), 
+                                                      showlegend=False))
+                            f.add_trace(go.Scatter(y=np.mean(sims,axis=0), mode='lines', 
+                                                  line=dict(width=3, color='yellow'), name='Avg'))
+                            f.update_layout(template="plotly_dark")
+                            st.plotly_chart(f, use_container_width=True)
+                
+                with t4:
+                    for n in news:
+                        c = "green" if n['sentiment']=="POSITIVE" else "red" if n['sentiment']=="NEGATIVE" else "gray"
+                        st.markdown(f":{c}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
 
 # --- PAGINA 2: PORTFOLIO MANAGER ---
 elif page == "💼 Mijn Portfolio":
@@ -396,85 +788,99 @@ elif page == "💼 Mijn Portfolio":
         with c4: 
             if st.button("Add"): 
                 st.session_state['portfolio'].append({"Ticker": t, "Aantal": a, "Koopprijs": p})
-                st.success("Added!"); st.rerun()
+                st.success("Added!")
+                st.rerun()
     
     if st.session_state['portfolio']:
         p_data = []
-        tot_v = 0; tot_c = 0
+        tot_v = 0
+        tot_c = 0
         tickers = []
+        
         for i in st.session_state['portfolio']:
             cur = get_current_price(i['Ticker'])
-            val = cur * i['Aantal']; cost = i['Koopprijs'] * i['Aantal']
-            tot_v += val; tot_c += cost
-            prof = val - cost; pct = (prof/cost)*100 if cost>0 else 0
+            val = cur * i['Aantal']
+            cost = i['Koopprijs'] * i['Aantal']
+            tot_v += val
+            tot_c += cost
+            prof = val - cost
+            pct = (prof/cost)*100 if cost>0 else 0
             clr = "green" if prof>=0 else "red"
             tickers.append(i['Ticker'])
-            p_data.append({"Ticker": i['Ticker'], "Aantal": i['Aantal'], "Waarde": f"{curr_sym}{val:.2f}", "Winst": f":{clr}[{curr_sym}{prof:.2f} ({pct:.1f}%)]"})
+            p_data.append({
+                "Ticker": i['Ticker'], 
+                "Aantal": i['Aantal'], 
+                "Waarde": f"{curr_sym}{val:.2f}", 
+                "Winst": f":{clr}[{curr_sym}{prof:.2f} ({pct:.1f}%)]"
+            })
         
         st.write(pd.DataFrame(p_data).to_markdown(index=False), unsafe_allow_html=True)
         
-        # --- NIEUW: CORRELATIE MATRIX ---
+        # Correlatie Matrix
         if len(tickers) > 1:
-            st.subheader("🔗 Correlatie Matrix (Risk Check)")
+            st.subheader("🔗 Correlatie Matrix")
             try:
                 corr_data = yf.download(tickers, period="1y")['Close'].pct_change().corr()
-                fig_corr = px.imshow(corr_data, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r', template="plotly_dark")
+                fig_corr = px.imshow(corr_data, text_auto=True, aspect="auto", 
+                                    color_continuous_scale='RdBu_r', template="plotly_dark")
                 st.plotly_chart(fig_corr, use_container_width=True)
-                st.caption("1.0 = Beweegt identiek. < 0.5 = Goede spreiding. -1.0 = Beweegt tegenovergesteld.")
-            except: st.warning("Kon correlatie matrix niet laden.")
-
+                st.caption("1.0 = Identiek | <0.5 = Goede spreiding | -1.0 = Tegenovergesteld")
+            except: 
+                st.warning("Correlatie matrix error")
+        
         m1, m2, m3 = st.columns(3)
         m1.metric("Waarde", f"{curr_sym}{tot_v:.2f}")
         m2.metric("Inleg", f"{curr_sym}{tot_c:.2f}")
-        m3.metric("Winst", f"{curr_sym}{tot_v-tot_c:.2f}", f"{((tot_v-tot_c)/tot_c)*100 if tot_c>0 else 0:.1f}%")
+        m3.metric("Winst", f"{curr_sym}{tot_v-tot_c:.2f}", 
+                 f"{((tot_v-tot_c)/tot_c)*100 if tot_c>0 else 0:.1f}%")
         
-        if st.button("Optimaliseer Mix"):
+        if st.button("Optimaliseer"):
             w = optimize_portfolio(tickers)
-            if isinstance(w, str): st.error(w)
+            if isinstance(w, str): 
+                st.error(w)
             elif w: 
                 df_w = pd.DataFrame(list(w.items()), columns=['Ticker', 'Ideaal'])
                 st.bar_chart(df_w.set_index('Ticker'))
-            else: st.warning("Minimaal 2 tickers nodig.")
+            else: 
+                st.warning("Min 2 tickers")
         
-        if st.button("Wissen"): st.session_state['portfolio'] = []; st.rerun()
-    else: st.write("Leeg.")
+        if st.button("Wissen"): 
+            st.session_state['portfolio'] = []
+            st.rerun()
+    else: 
+        st.write("Portfolio is leeg")
 
-# --- PAGINA 3: DEEP SCANNER ---
+# --- PAGINA 3: SCANNER ---
 elif page == "📡 Deep Scanner":
-    st.title("Scanner")
-    pre = st.selectbox("Markt", list(PRESETS.keys()))
-    txt = st.text_area("Tickers", PRESETS[pre])
-    if st.button("Scan"):
+    st.title("📡 Deep Market Scanner")
+    pre = st.selectbox("Kies Markt", list(PRESETS.keys()))
+    txt = st.text_area("Tickers (comma separated)", PRESETS[pre])
+    
+    if st.button("🔍 Start Scan"):
         lst = [x.strip().upper() for x in txt.split(',')]
         res = []
         bar = st.progress(0)
-        failed = [] 
+        failed = []
+        
         for i, t in enumerate(lst):
-            bar.progress((i)/len(lst))
-            time.sleep(0.2) 
+            bar.progress((i+1)/len(lst))
+            time.sleep(0.2)
+            
             try:
-                df, met, fund, ws, _, snip, _, _, _ = get_zenith_data(t)
+                df, met, fund, ws, _, _, _, _, _ = get_zenith_data(t)
                 if df is not None:
-                    sc = 0; reasons = []
-                    if met['price'] > met['sma200']: sc += 20; reasons.append("Trend 📈")
-                    if met['rsi'] < 30: sc += 15; reasons.append("Oversold 📉")
-                    if ws['upside'] > 15: sc += 15; reasons.append("Analisten 💼")
-                    if fund['fair_value'] and met['price'] < fund['fair_value']: sc += 15; reasons.append("Value 💎")
-                    if snip['rr_ratio'] > 2: sc += 15; reasons.append("Sniper 🎯")
-                    if fund['pe'] > 0 and fund['pe'] < 20: sc += 10; reasons.append("Goedkoop 💰")
-
-                    adv = "KOPEN" if sc>=70 else "HOUDEN" if sc>=50 else "AFBLIJVEN"
+                    scoring = score_entry_opportunity(df, met['price'])
                     
                     res.append({
-                        "Ticker": t, 
-                        "Prijs": met['price'], 
-                        "Analist Doel": f"{curr_sym}{ws['target']:.2f}",
+                        "Ticker": t,
+                        "Prijs": met['price'],
+                        "Target": f"{curr_sym}{ws['target']:.2f}",
                         "Upside": f"{ws['upside']:.1f}%",
-                        "Score": sc, 
-                        "Advies": adv,
-                        "Reden": " + ".join(reasons) if reasons else "-"
+                        "Score": scoring['score'],
+                        "Advies": scoring['recommendation']
                     })
-                else: failed.append(f"{t}: Geen data")
+                else:
+                    failed.append(f"{t}: Geen data")
             except Exception as e:
                 failed.append(f"{t}: {str(e)}")
         
@@ -484,75 +890,136 @@ elif page == "📡 Deep Scanner":
     
     if 'res' in st.session_state:
         if not st.session_state['res']:
-            st.warning("Geen resultaten gevonden.")
+            st.warning("Geen resultaten")
         else:
             df = pd.DataFrame(st.session_state['res']).sort_values('Score', ascending=False)
             st.dataframe(
-                df, 
-                use_container_width=True, 
+                df,
+                use_container_width=True,
                 hide_index=True,
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=100),
                     "Prijs": st.column_config.NumberColumn("Prijs", format=f"{curr_sym}%.2f")
                 }
             )
-            st.download_button("📥 Download (CSV)", df.to_csv(index=False), "results.csv", "text/csv")
+            st.download_button("📥 Download CSV", df.to_csv(index=False), "scan_results.csv", "text/csv")
             
             st.markdown("---")
             c1, c2 = st.columns([3, 1])
             options = [r['Ticker'] for r in st.session_state['res']]
             if options:
-                sel = c1.selectbox("Kies:", options)
-                c2.button("🚀 Analyseer Nu", on_click=start_analysis_for, args=(sel,))
+                sel = c1.selectbox("Selecteer voor analyse:", options)
+                c2.button("🚀 Analyseer", on_click=start_analysis_for, args=(sel,))
         
         if 'failed' in st.session_state and st.session_state['failed']:
-            with st.expander("⚠️ Foutrapportage"): st.write(st.session_state['failed'])
+            with st.expander("⚠️ Errors"):
+                st.write(st.session_state['failed'])
 
-# --- PAGINA 4: EDUCATE & BASICS ---
+# --- PAGINA 4: EDUCATIE ---
 elif page == "🎓 Leer de Basics":
-    st.title("🎓 Zenith Academy: Beleggen voor Beginners")
-    st.markdown("### Begrijp de data achter je beslissingen")
-
-    with st.expander("💎 1. De 'Eerlijke Prijs' (Graham Number)"):
+    st.title("🎓 Zenith Academy")
+    st.markdown("### Professional Trading Education")
+    
+    with st.expander("🎯 1. Entry Strategieën"):
         st.write("""
-        **Wat is het?** Een berekening die kijkt naar de winst en bezittingen om de 'echte' waarde van een aandeel te bepalen.
-        * **De Metafoor:** Zie het als de taxatiewaarde van een huis. Als de vraagprijs lager is dan de taxatie, heb je een goede deal.
-        * **Zenith Tip:** Wij zoeken aandelen waar de huidige prijs onder de Fair Value ligt.
+        **Fibonacci 0.618 (Golden Ratio)**
+        - De meest betrouwbare retracement level
+        - Historisch bewezen dat prijzen vaak hier omkeren
+        - Gebruik dit level in combinatie met support zones
+        
+        **Support/Resistance**
+        - Plekken waar prijs eerder keerde
+        - Hoe vaker getest, hoe sterker het level
+        - Break van support = nieuw resistance (en vice versa)
+        
+        **Bollinger Bands**
+        - Prijs bij lower band = mogelijk oversold
+        - Squeeze (smalle bands) = breakout komt eraan
+        - Gebruik als bevestiging, niet als enige signaal
         """)
-
-    with st.expander("🌡️ 2. De Thermometer (RSI)"):
+    
+    with st.expander("🛑 2. Stop Loss Strategieën"):
         st.write("""
-        **Wat is het?** De Relative Strength Index (RSI) meet of een aandeel te snel gestegen of gedaald is.
-        * **Onder 30:** Het aandeel is 'onderkoeld' (Oversold). Vaak een koopkans.
-        * **Boven 70:** Het aandeel is 'oververhit' (Overbought). De kans op een daling is groot.
+        **ATR-based Stops (Beste Methode)**
+        - Tight (1.5 ATR): Voor day traders, kan vaak uitgeschud worden
+        - Normal (2.0 ATR): Sweet spot voor swing traders ✅
+        - Wide (3.0 ATR): Voor volatile aandelen of position trading
+        
+        **Waarom ATR?**
+        - Tesla heeft meer bewegingsruimte nodig dan Coca-Cola
+        - Voorkomt dat je uitgeschud wordt door normale volatiliteit
+        - Past zich aan aan marktcondities
         """)
-
-    with st.expander("📈 3. De Lange Termijn Trend (SMA 200)"):
+    
+    with st.expander("💰 3. Position Sizing"):
         st.write("""
-        **Wat is het?** Het gemiddelde van de prijs over de laatste 200 dagen.
-        * **Boven de lijn:** De trend is positief (Bullish).
-        * **Onder de lijn:** De trend is negatief (Bearish). Professionals kopen meestal alleen als de prijs boven deze lijn zit.
+        **De 1% Rule**
+        - Riskeer max 1-2% van je account per trade
+        - Met €10,000: Max €100-200 risico per trade
+        - Beschermt je tegen reeksen van verliezen
+        
+        **Berekening:**
+        ```
+        Aandelen = (Account × Risk%) / (Entry - Stop)
+        Voorbeeld: (€10,000 × 1%) / (€100 - €95) = 20 aandelen
+        ```
+        
+        **Max Position Size: 20%**
+        - Diversificatie beschermt je portfolio
+        - 1 aandeel mag nooit je hele portfolio vernietigen
         """)
-
-    with st.expander("🎯 4. De Sniper & ATR Stop Loss"):
+    
+    with st.expander("🎯 4. Take Profit Ladder"):
         st.write("""
-        **Wat is ATR?** De Average True Range meet hoe 'wild' een aandeel beweegt.
-        * **Waarom ATR?** Een stabiel aandeel (als Coca-Cola) heeft een krappe stop loss nodig. Een wild aandeel (als Tesla) heeft ruimte nodig om te ademen zonder dat je direct wordt 'uitgeschud'.
-        * **Risk/Reward:** Wij mikken op 1:2. Dat betekent dat we bereid zijn €1 te riskeren om €2 te verdienen.
+        **Waarom Ladder?**
+        - Niemand weet de exacte top
+        - Balans tussen winst nemen en laten lopen
+        - Vermindert emotionele beslissingen
+        
+        **Strategie:**
+        1. Bij TP1 (1.5R): Verkoop 1/3, beweeg stop naar breakeven
+        2. Bij TP2 (2R): Verkoop 1/3, beweeg stop naar TP1
+        3. Bij TP3 (3R): Laat 1/3 lopen met trailing stop
+        
+        **R-Multiple:**
+        - 1R = 1× je risico
+        - Doel: Gemiddeld >2R per trade
+        - 3 winnaars van 2R = 1 verliezer van 1R compenseren
         """)
-
-    with st.expander("🔗 5. Correlatie Matrix (Je Geheime Wapen)"):
+    
+    with st.expander("📊 5. Risk/Reward Ratio"):
         st.write("""
-        **Wat is het?** Het laat zien of je aandelen 'vriendjes' zijn.
-        * **Correlatie 1.0:** Als aandeel A stijgt, stijgt B ook. Dit is gevaarlijk (geen spreiding).
-        * **Correlatie < 0.5:** Je aandelen reageren anders op de markt. Dit is veiliger.
-        * **Voorbeeld:** Als je alleen maar AI-aandelen koopt, is je correlatie vaak 0.9. Als de tech-sector valt, valt je hele portfolio.
+        **Minimum: 1:1.5**
+        - Onder 1:1.5 = Niet de moeite waard
+        - Sweet spot: 1:2 tot 1:3
+        - Boven 1:5 = Vaak unrealistisch
+        
+        **Wiskunde:**
+        - Met 1:2 RR hoef je maar 40% winstpercentage voor profit
+        - Met 1:3 RR is 30% winstpercentage genoeg
+        - Daarom is RR belangrijker dan winrate!
         """)
-
-    with st.expander("🔮 6. Monte Carlo & Backtesting"):
+    
+    with st.expander("🔗 6. Correlatie & Diversificatie"):
         st.write("""
-        **Backtest:** Een simulatie van "Wat als ik dit in het verleden had gedaan?". Het geeft geen garantie, maar laat zien of een strategie statistisch werkt.
-        **Monte Carlo:** Een computer die 200 keer 'met de dobbelstenen gooit' om te zien waar de prijs over een jaar kan eindigen op basis van huidige grilligheid.
+        **Correlatie Matrix**
+        - 1.0 = Perfect gekoppeld (gevaarlijk)
+        - 0.5 = Matige correlatie
+        - 0.0 = Geen verband (ideaal)
+        - -1.0 = Tegenovergesteld (hedge)
+        
+        **Voorbeeld:**
+        - NVDA + AMD + INTC = Hoge correlatie (0.8-0.9)
+        - Als chips sector daalt, daalt alles
+        - Betere mix: NVDA + KO + XLE + GLD (lage correlatie)
         """)
-
-    st.success("💡 **Gouden regel:** Een goede belegger kijkt niet naar de prijs van vandaag, maar naar de trend van morgen en het risico van gisteren.")
+    
+    st.success("""
+    💡 **Golden Rules:**
+    1. Risk max 1-2% per trade
+    2. Eis minimum 1:2 Risk/Reward
+    3. Gebruik ATR voor dynamische stops
+    4. Neem winst in ladders (1/3, 1/3, 1/3)
+    5. Diversifieer (lage correlatie)
+    6. Beweeg stop naar breakeven na TP1
+    """)
