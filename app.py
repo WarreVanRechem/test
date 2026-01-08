@@ -362,12 +362,14 @@ def get_zenith_data_optimized(ticker):
         df = stock.history(period="7y")
         
         if df.empty: 
-            return None, None, None, None, None, None, "Geen data", None
+            return None, None, None, None, "Geen data", None
         
         info = stock.info
         
         try:
-            financials = stock.financials
+            financials_raw = stock.financials
+            # Convert to dict om serializable te maken
+            financials = financials_raw.to_dict() if financials_raw is not None and not financials_raw.empty else None
         except:
             financials = None
         
@@ -457,24 +459,25 @@ def get_zenith_data_optimized(ticker):
             "bull": mb
         }
         
-        return df, met, fund, ws, stock, financials, None, peers
+        # Return geen stock object (niet serializable voor cache)
+        return df, met, fund, ws, financials, None, peers
         
     except Exception as e:
-        return None, None, None, None, None, None, str(e), None
+        return None, None, None, None, None, str(e), None
 
-def get_external_info_optimized(stock_obj):
+def get_external_info_optimized(ticker):
     try:
         buys = 0
         
         try:
             time.sleep(0.3)
-            ins = stock_obj.insider_transactions
+            stock = yf.Ticker(ticker)
+            ins = stock.insider_transactions
             if ins is not None and not ins.empty:
                 buys = ins.head(10)[ins.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
         except:
             pass
         
-        ticker = stock_obj.ticker
         try:
             time.sleep(0.3)
             f = feedparser.parse(
@@ -497,19 +500,20 @@ def get_external_info_optimized(stock_obj):
     except:
         return 0, []
 
-def get_financial_trends_optimized(financials_obj):
+def get_financial_trends_optimized(financials_dict):
     try:
-        if financials_obj is None or financials_obj.empty:
+        if financials_dict is None or not financials_dict:
             return None
         
-        f = financials_obj.T
+        # Convert dict terug naar DataFrame
+        f = pd.DataFrame(financials_dict).T
         cols = [c for c in ['Total Revenue', 'Net Income'] if c in f.columns]
         
         if not cols:
             return None
         
         df = f[cols].dropna()
-        df.index = df.index.year
+        df.index = pd.to_datetime(df.index).year
         return df.sort_index()
     except:
         return None
@@ -805,13 +809,13 @@ if page == "🔎 Markt Analyse":
         st.session_state['selected_ticker'] = tick
     
     if st.session_state['analysis_active']:
-        df, met, fund, ws, stock_obj, financials, err, peers = get_zenith_data_optimized(st.session_state['selected_ticker'])
+        df, met, fund, ws, financials, err, peers = get_zenith_data_optimized(st.session_state['selected_ticker'])
         
         if err: 
             st.error(f"⚠️ {err}")
         elif df is not None:
             with st.spinner('Analyseren...'): 
-                buys, news = get_external_info_optimized(stock_obj)
+                buys, news = get_external_info_optimized(tick)
                 trade_setup = generate_complete_trade_setup(tick, df, cap, risk_pct)
             
             if 'error' in trade_setup:
@@ -1052,7 +1056,7 @@ elif page == "📡 Deep Scanner":
             try:
                 time.sleep(delay)
                 
-                df, met, fund, ws, _, _, err, _ = get_zenith_data_optimized(ticker)
+                df, met, fund, ws, _, err, _ = get_zenith_data_optimized(ticker)
                 
                 if err:
                     failed.append(f"{ticker}: {err}")
