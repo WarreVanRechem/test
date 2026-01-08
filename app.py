@@ -11,25 +11,20 @@ import warnings
 import requests
 import time
 from datetime import datetime
-from io import BytesIO
 
-# Try-except voor scipy
 try:
     from scipy.optimize import minimize
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
 
-# --- CONFIGURATIE ---
-st.set_page_config(page_title="Zenith Terminal v28 ULTIMATE", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Zenith Terminal v28", layout="wide", page_icon="💎")
 warnings.filterwarnings("ignore")
 
-# --- DISCLAIMER & CREDITS ---
 st.sidebar.error("⚠️ **DISCLAIMER:** Geen financieel advies. Educatief gebruik.")
 st.sidebar.markdown("---")
 st.sidebar.markdown("© 2026 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
 
-# --- SESSION STATE ---
 if 'portfolio' not in st.session_state: st.session_state['portfolio'] = []
 if 'nav_page' not in st.session_state: st.session_state['nav_page'] = "🔎 Markt Analyse"
 if 'selected_ticker' not in st.session_state: st.session_state['selected_ticker'] = "AAPL"
@@ -37,7 +32,6 @@ if 'analysis_active' not in st.session_state: st.session_state['analysis_active'
 if 'watchlist' not in st.session_state: st.session_state['watchlist'] = []
 if 'trade_journal' not in st.session_state: st.session_state['trade_journal'] = []
 
-# --- NAVIGATIE FUNCTIES ---
 def start_analysis_for(ticker):
     st.session_state['selected_ticker'] = ticker
     st.session_state['nav_page'] = "🔎 Markt Analyse"
@@ -46,7 +40,6 @@ def start_analysis_for(ticker):
 def reset_analysis():
     st.session_state['analysis_active'] = False
 
-# --- AI MODEL LADEN ---
 @st.cache_resource
 def load_ai():
     try: return pipeline("sentiment-analysis", model="ProsusAI/finbert")
@@ -54,7 +47,6 @@ def load_ai():
 
 ai_pipe = load_ai()
 
-# --- PRESETS VOOR SCANNER ---
 PRESETS = {
     "🇺🇸 Big Tech & AI": "NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA, AMD, PLTR",
     "🇪🇺 AEX & Bel20": "ASML.AS, ADYEN.AS, BESI.AS, SHELL.AS, KBC.BR, UCB.BR, SOLB.BR, ABI.BR, INGA.AS",
@@ -62,21 +54,16 @@ PRESETS = {
     "🛡️ Defensive": "KO, JNJ, PEP, MCD, O, V, BRK-B"
 }
 
-# ============================================
-# OPTIMIZED CACHE FUNCTIONS 🔥
-# ============================================
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_sp500_cached():
-    """Cache S&P500 data voor 1 uur - HUGE performance win!"""
     try:
+        time.sleep(0.5)
         return yf.Ticker("^GSPC").history(period="7y")
     except:
         return None
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_macro_data_optimized():
-    """Batch download macro data - 5x sneller!"""
     tickers_dict = {
         "^GSPC": "S&P 500",
         "^IXIC": "Nasdaq", 
@@ -88,6 +75,7 @@ def get_macro_data_optimized():
     results = {}
     
     try:
+        time.sleep(0.5)
         tickers_list = list(tickers_dict.keys())
         data = yf.download(tickers_list, period="2d", group_by='ticker', threads=False, progress=False)
         
@@ -109,12 +97,7 @@ def get_macro_data_optimized():
     except:
         return {name: (0, 0) for name in tickers_dict.values()}
 
-# ============================================
-# ENHANCED TRADING FUNCTIONS
-# ============================================
-
 def calculate_advanced_atr(df, period=14):
-    """Berekent ATR met meerdere stop loss niveaus"""
     try:
         high_low = df['High'] - df['Low']
         high_close = np.abs(df['High'] - df['Close'].shift())
@@ -137,7 +120,6 @@ def calculate_advanced_atr(df, period=14):
         return {'atr_value': 0, 'tight_stop': 0, 'normal_stop': 0, 'wide_stop': 0, 'volatility': 0}
 
 def calculate_entry_zones(df):
-    """Berekent meerdere strategische entry punten"""
     try:
         close = df['Close']
         high = df['High']
@@ -199,7 +181,6 @@ def calculate_entry_zones(df):
         return {}
 
 def calculate_take_profit_levels(entry_price, stop_loss_price, df):
-    """Berekent meerdere take profit targets"""
     try:
         risk = entry_price - stop_loss_price
         
@@ -214,7 +195,6 @@ def calculate_take_profit_levels(entry_price, stop_loss_price, df):
         return {'tp1': 0, 'tp2': 0, 'tp3': 0, 'swing_high': 0}
 
 def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss_price):
-    """Smart position sizing met risk management"""
     risk_amount = account_balance * (risk_pct / 100)
     risk_per_share = entry_price - stop_loss_price
     
@@ -237,7 +217,6 @@ def calculate_position_size(account_balance, risk_pct, entry_price, stop_loss_pr
     }
 
 def score_entry_opportunity(df, current_price):
-    """Geeft entry opportunity score 0-100"""
     try:
         score = 0
         signals = []
@@ -265,17 +244,17 @@ def score_entry_opportunity(df, current_price):
         
         if current_price > sma200:
             score += 15
-            signals.append("✅ Boven 200MA (Bullish)")
+            signals.append("✅ Boven 200MA")
         if current_price > sma50:
             score += 10
             signals.append("✅ Boven 50MA")
         
         if rsi < 30:
             score += 20
-            signals.append("🔥 RSI Oversold (<30)")
+            signals.append("🔥 RSI Oversold")
         elif rsi < 40:
             score += 10
-            signals.append("📉 RSI Laag (<40)")
+            signals.append("📉 RSI Laag")
         
         if zones.get('nearest_support'):
             near_support = abs(current_price - zones['nearest_support']) / current_price < 0.02
@@ -287,7 +266,7 @@ def score_entry_opportunity(df, current_price):
             near_fib = abs(current_price - zones['fib_618']) / current_price < 0.02
             if near_fib:
                 score += 10
-                signals.append(f"🎯 Fib 0.618 Zone")
+                signals.append(f"🎯 Fib 0.618")
         
         if macd_cross:
             score += 10
@@ -306,7 +285,6 @@ def score_entry_opportunity(df, current_price):
         return {'score': 0, 'signals': [], 'recommendation': 'ERROR'}
 
 def generate_complete_trade_setup(ticker, df, account_balance, risk_pct=1.0):
-    """Genereert complete trade setup"""
     try:
         current_price = df['Close'].iloc[-1]
         
@@ -375,15 +353,10 @@ def generate_complete_trade_setup(ticker, df, account_balance, risk_pct=1.0):
     except Exception as e:
         return {'error': str(e)}
 
-# ============================================
-# OPTIMIZED DATA FUNCTIONS (HERGEBRUIK!) 🔥
-# ============================================
-
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_zenith_data_optimized(ticker):
-    """Optimized version met object hergebruik"""
     try:
-        time.sleep(0.3)
+        time.sleep(0.8)
         
         stock = yf.Ticker(ticker)
         df = stock.history(period="7y")
@@ -400,7 +373,6 @@ def get_zenith_data_optimized(ticker):
         
         cur = df['Close'].iloc[-1]
         
-        # Fair Value
         try:
             eps = info.get('trailingEps')
             bvps = info.get('bookValue')
@@ -438,7 +410,6 @@ def get_zenith_data_optimized(ticker):
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # Use cached S&P500!
         m = get_sp500_cached()
         if m is not None:
             try:
@@ -492,11 +463,11 @@ def get_zenith_data_optimized(ticker):
         return None, None, None, None, None, None, str(e), None
 
 def get_external_info_optimized(stock_obj):
-    """Hergebruik stock object"""
     try:
         buys = 0
         
         try:
+            time.sleep(0.3)
             ins = stock_obj.insider_transactions
             if ins is not None and not ins.empty:
                 buys = ins.head(10)[ins.head(10)['Text'].str.contains("Purchase", case=False, na=False)].shape[0]
@@ -505,11 +476,12 @@ def get_external_info_optimized(stock_obj):
         
         ticker = stock_obj.ticker
         try:
+            time.sleep(0.3)
             f = feedparser.parse(
                 requests.get(
                     f"https://news.google.com/rss/search?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en",
                     headers={'User-Agent': 'Mozilla/5.0'},
-                    timeout=3
+                    timeout=5
                 ).content
             )
             
@@ -526,7 +498,6 @@ def get_external_info_optimized(stock_obj):
         return 0, []
 
 def get_financial_trends_optimized(financials_obj):
-    """Process financials zonder nieuwe API call"""
     try:
         if financials_obj is None or financials_obj.empty:
             return None
@@ -543,42 +514,18 @@ def get_financial_trends_optimized(financials_obj):
     except:
         return None
 
-# ============================================
-# OUDE FUNCTIES (BLIJVEN HETZELFDE)
-# ============================================
-
-def get_smart_peers(ticker, info):
-    if not info: return ["^GSPC"]
-    sector = info.get('sector', '').lower()
-    industry = info.get('industry', '').lower()
-    peers = []
-    
-    if 'semicon' in industry: peers = ["NVDA", "AMD", "INTC", "TSM", "ASML"]
-    elif 'software' in industry or 'technology' in sector: peers = ["MSFT", "AAPL", "GOOGL", "ORCL", "ADBE"]
-    elif 'bank' in industry: peers = ["JPM", "BAC", "C", "WFC", "HSBC"]
-    elif 'oil' in industry or 'energy' in sector: peers = ["XOM", "CVX", "SHEL", "TTE", "BP"]
-    elif 'auto' in industry: peers = ["TSLA", "TM", "F", "GM", "STLA"]
-    elif 'drug' in industry or 'healthcare' in sector: peers = ["LLY", "JNJ", "PFE", "MRK", "NVS"]
-    
-    if not peers:
-        if 'tech' in sector: peers = ["XLK"]
-        elif 'health' in sector: peers = ["XLV"]
-        elif 'financ' in sector: peers = ["XLF"]
-        elif 'energy' in sector: peers = ["XLE"]
-        else: peers = ["^GSPC"]
-    
-    peers = [p for p in peers if p.upper() != ticker.upper()]
-    return peers[:4]
-
 def compare_peers(main_ticker, peers_list):
     try:
-        df = yf.download([main_ticker] + peers_list, period="1y")['Close']
+        time.sleep(0.5)
+        df = yf.download([main_ticker] + peers_list, period="1y", progress=False)['Close']
         if df.empty: return None
         return df.apply(lambda x: ((x / x.iloc[0]) - 1) * 100)
-    except: return None
+    except: 
+        return None
 
 def run_backtest(ticker, period="5y"):
     try:
+        time.sleep(0.5)
         stock = yf.Ticker(ticker)
         df = stock.history(period=period)
         if df.empty or len(df) < 250: return "Te weinig data"
@@ -626,6 +573,7 @@ def run_backtest(ticker, period="5y"):
 
 def run_monte_carlo(ticker):
     try:
+        time.sleep(0.5)
         d = yf.Ticker(ticker).history(period="1y")['Close']
         ret = d.pct_change().dropna()
         sims = []
@@ -645,7 +593,8 @@ def run_monte_carlo(ticker):
 def optimize_portfolio(tickers):
     if not SCIPY_AVAILABLE: return "SCIPY_MISSING"
     try:
-        data = yf.download(tickers, period="1y")['Close'].dropna()
+        time.sleep(0.5)
+        data = yf.download(tickers, period="1y", progress=False)['Close'].dropna()
         if data.empty or len(tickers) < 2: return None
         
         returns = data.pct_change()
@@ -667,20 +616,17 @@ def optimize_portfolio(tickers):
 
 def get_current_price(ticker):
     try:
+        time.sleep(0.2)
         obj = yf.Ticker(ticker)
         p = obj.fast_info.last_price
         if not pd.isna(p) and p > 0: return p
         h = obj.history(period="1d")
         if not h.empty: return h['Close'].iloc[-1]
-    except: pass
+    except: 
+        pass
     return 0.0
 
-# ============================================
-# WATCHLIST SIDEBAR 🔥
-# ============================================
-
 def render_watchlist_sidebar():
-    """Render watchlist in sidebar"""
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⭐ Watchlist")
     
@@ -719,16 +665,11 @@ def render_watchlist_sidebar():
             st.session_state['nav_page'] = "📡 Deep Scanner"
             st.rerun()
     else:
-        st.sidebar.caption("Geen items in watchlist")
-
-# ============================================
-# TRADE JOURNAL 🔥
-# ============================================
+        st.sidebar.caption("Geen items")
 
 def render_trade_journal_page():
-    """Complete trade journal pagina"""
     st.title("📓 Trade Journal")
-    st.caption("Track je trades en leer van je fouten")
+    st.caption("Track je trades")
     
     if st.session_state['trade_journal']:
         df_journal = pd.DataFrame(st.session_state['trade_journal'])
@@ -741,28 +682,28 @@ def render_trade_journal_page():
         total_pl = df_journal['profit'].sum()
         
         col1.metric("Total Trades", total_trades)
-        col2.metric("Win Rate", f"{win_rate:.1f}%", "🟢" if win_rate > 50 else "🔴")
+        col2.metric("Win Rate", f"{win_rate:.1f}%")
         col3.metric("Total P/L", f"€{total_pl:.2f}")
         col4.metric("Avg R/R", f"{df_journal['rr'].mean():.2f}")
         
         st.markdown("---")
     
-    with st.expander("➕ Log Nieuwe Trade", expanded=not bool(st.session_state['trade_journal'])):
+    with st.expander("➕ Log Trade", expanded=not bool(st.session_state['trade_journal'])):
         col1, col2 = st.columns(2)
         
         with col1:
             j_ticker = st.text_input("Ticker", key="j_ticker")
-            j_entry = st.number_input("Entry Prijs", 0.0, key="j_entry")
-            j_stop = st.number_input("Stop Loss", 0.0, key="j_stop")
+            j_entry = st.number_input("Entry", 0.0, key="j_entry")
+            j_stop = st.number_input("Stop", 0.0, key="j_stop")
             j_shares = st.number_input("Aantal", 1, key="j_shares")
         
         with col2:
-            j_exit = st.number_input("Exit (0 = open)", 0.0, key="j_exit")
+            j_exit = st.number_input("Exit (0=open)", 0.0, key="j_exit")
             j_reason = st.text_input("Reden", key="j_reason")
             j_emotion = st.selectbox("Emotie", ["😌 Kalm", "😰 FOMO", "😤 Wraak", "🤔 Unsure"], key="j_emotion")
             j_notes = st.text_area("Notes", key="j_notes")
         
-        if st.button("💾 Log Trade", type="primary"):
+        if st.button("💾 Log", type="primary"):
             if j_ticker and j_entry > 0:
                 profit = (j_exit - j_entry) * j_shares if j_exit > 0 else 0
                 pct = ((j_exit - j_entry) / j_entry) * 100 if j_exit > 0 else 0
@@ -786,10 +727,10 @@ def render_trade_journal_page():
                     'status': 'Closed' if j_exit > 0 else 'Open'
                 })
                 
-                st.success(f"✅ Trade logged: {j_ticker}")
+                st.success(f"✅ Logged: {j_ticker}")
                 st.rerun()
             else:
-                st.error("Vul minimaal Ticker en Entry in!")
+                st.error("Vul ticker en entry in!")
     
     if st.session_state['trade_journal']:
         df_journal = pd.DataFrame(st.session_state['trade_journal'])
@@ -808,18 +749,14 @@ def render_trade_journal_page():
         df_journal['cumulative_pl'] = df_journal['profit'].cumsum()
         st.line_chart(df_journal[['cumulative_pl']])
         
-        st.download_button("📥 Download Journal", df_journal.to_csv(index=False), "trade_journal.csv", "text/csv")
+        st.download_button("📥 CSV", df_journal.to_csv(index=False), "journal.csv", "text/csv")
         
-        if st.button("🗑️ Wis Alles"):
-            if st.checkbox("Weet je het zeker?"):
+        if st.button("🗑️ Wis"):
+            if st.checkbox("Zeker?"):
                 st.session_state['trade_journal'] = []
                 st.rerun()
     else:
-        st.info("📝 Nog geen trades gelogd.")
-
-# ============================================
-# UI START
-# ============================================
+        st.info("📝 Nog geen trades")
 
 st.sidebar.header("Navigatie")
 page = st.sidebar.radio("Ga naar:", [
@@ -847,9 +784,9 @@ with st.sidebar.expander("🔧 Advanced"):
         st.success("Cache cleared!")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("© 2026 Zenith Terminal | Built by [Warre Van Rechem](https://www.linkedin.com/in/warre-van-rechem-928723298/)")
+st.sidebar.markdown("© 2026 Zenith Terminal")
 
-st.title("💎 Zenith Ultimate Terminal v28")
+st.title("💎 Zenith Terminal v28")
 mac = get_macro_data_optimized()
 cols = st.columns(5)
 for i, m in enumerate(["S&P 500", "Nasdaq", "Goud", "Olie", "10Y Rente"]):
@@ -857,17 +794,13 @@ for i, m in enumerate(["S&P 500", "Nasdaq", "Goud", "Olie", "10Y Rente"]):
     cols[i].metric(m, f"{v:.2f}", f"{ch:.2f}%")
 st.markdown("---")
 
-# ============================================
-# PAGINA 1: MARKT ANALYSE
-# ============================================
-
 if page == "🔎 Markt Analyse":
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1: tick = st.text_input("Ticker", value=st.session_state['selected_ticker'], on_change=reset_analysis).upper()
     with c2: cap = st.number_input(f"Account ({curr_sym})", acc)
     with c3: risk_pct = st.number_input("Risk %", 0.5, 5.0, risk, 0.1)
     
-    if st.button("🚀 Start Analysis"): 
+    if st.button("🚀 Analyseer"): 
         st.session_state['analysis_active'] = True
         st.session_state['selected_ticker'] = tick
     
@@ -882,12 +815,12 @@ if page == "🔎 Markt Analyse":
                 trade_setup = generate_complete_trade_setup(tick, df, cap, risk_pct)
             
             if 'error' in trade_setup:
-                st.error(f"Setup Error: {trade_setup['error']}")
+                st.error(f"{trade_setup['error']}")
             else:
                 st.markdown(f"## 🏢 {met['name']} ({tick})")
                 
                 k1, k2, k3, k4, k5 = st.columns(5)
-                k1.metric("AI Score", f"{trade_setup['score']}/100")
+                k1.metric("Score", f"{trade_setup['score']}/100")
                 
                 sig_color = "green" if "KOPEN" in trade_setup['recommendation'] else "orange" if "AFWACH" in trade_setup['recommendation'] else "red"
                 k2.markdown(f"**Signal:** :{sig_color}[{trade_setup['recommendation']}]")
@@ -899,19 +832,18 @@ if page == "🔎 Markt Analyse":
                     diff_fair = ((fund['fair_value'] - met['price']) / met['price']) * 100
                     k5.metric("Fair Value", f"{curr_sym}{fund['fair_value']:.2f}", f"{diff_fair:.1f}%")
                 else: 
-                    k5.metric("Fair Value", "N/A", "Loss Making")
+                    k5.metric("Fair Value", "N/A")
                 
                 if trade_setup['signals']:
                     st.info("**🎯 Signals:** " + " | ".join(trade_setup['signals']))
                 
                 st.markdown("---")
                 
-                # TRADE SETUP
-                st.subheader("🎯 Professional Trade Setup")
+                st.subheader("🎯 Trade Setup")
                 
                 st.markdown("### 1️⃣ ENTRY")
                 e1, e2, e3 = st.columns(3)
-                entry_status = "🟢 KOOP NU" if trade_setup['distance_to_entry'] < 1 else f"🟡 Wacht -{trade_setup['distance_to_entry']:.1f}%"
+                entry_status = "🟢 NU" if trade_setup['distance_to_entry'] < 1 else f"🟡 Wacht -{trade_setup['distance_to_entry']:.1f}%"
                 e1.metric("Entry", f"{curr_sym}{trade_setup['entry_price']:.2f}", entry_status)
                 e2.metric("Methode", trade_setup['entry_method'])
                 e3.metric("Afstand", f"{trade_setup['distance_to_entry']:.2f}%")
@@ -934,7 +866,7 @@ if page == "🔎 Markt Analyse":
                 t3.metric("TP3 (1/3)", f"{curr_sym}{trade_setup['tp3']:.2f}", f"+{profit_tp3:.1f}%")
                 
                 rr_color = "green" if trade_setup['rr_ratio'] >= 2 else "orange"
-                st.markdown(f"**Risk/Reward:** :{rr_color}[1 : {trade_setup['rr_ratio']:.2f}]")
+                st.markdown(f"**R/R:** :{rr_color}[1 : {trade_setup['rr_ratio']:.2f}]")
                 
                 st.markdown("### 4️⃣ POSITION")
                 p1, p2, p3, p4 = st.columns(4)
@@ -945,7 +877,6 @@ if page == "🔎 Markt Analyse":
                 
                 st.markdown("---")
                 
-                # FUNDAMENTALS
                 st.subheader("📊 Fundamentals")
                 fin_df = get_financial_trends_optimized(financials)
                 if fin_df is not None:
@@ -954,8 +885,7 @@ if page == "🔎 Markt Analyse":
                 else: 
                     st.warning("Geen data")
                 
-                # CHART
-                st.subheader("📈 Technical Chart")
+                st.subheader("📈 Chart")
                 end = df.index[-1]
                 start = end - pd.DateOffset(years=1)
                 plot_df = df.loc[start:end]
@@ -985,7 +915,6 @@ if page == "🔎 Markt Analyse":
                 fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # TABS
                 t1, t2, t3, t4 = st.tabs(["⚔️ Peers", "🔙 Backtest", "🔮 Monte Carlo", "📰 News"])
                 
                 with t1:
@@ -997,7 +926,7 @@ if page == "🔎 Markt Analyse":
                                 st.line_chart(pd_data)
                 
                 with t2:
-                    if st.button("Run Backtest"):
+                    if st.button("Run"):
                         res = run_backtest(tick)
                         if isinstance(res, str): 
                             st.error(res)
@@ -1024,12 +953,8 @@ if page == "🔎 Markt Analyse":
                         c = "green" if n['sentiment']=="POSITIVE" else "red" if n['sentiment']=="NEGATIVE" else "gray"
                         st.markdown(f":{c}[**{n['sentiment']}**] | [{n['title']}]({n['link']})")
 
-# ============================================
-# PAGINA 2: PORTFOLIO
-# ============================================
-
 elif page == "💼 Mijn Portfolio":
-    st.title("💼 Portfolio Manager")
+    st.title("💼 Portfolio")
     
     with st.expander("➕ Toevoegen", expanded=True):
         c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
@@ -1070,7 +995,8 @@ elif page == "💼 Mijn Portfolio":
         if len(tickers) > 1:
             st.subheader("🔗 Correlatie")
             try:
-                corr_data = yf.download(tickers, period="1y")['Close'].pct_change().corr()
+                time.sleep(0.5)
+                corr_data = yf.download(tickers, period="1y", progress=False)['Close'].pct_change().corr()
                 fig_corr = px.imshow(corr_data, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r', template="plotly_dark")
                 st.plotly_chart(fig_corr, use_container_width=True)
             except: 
@@ -1095,23 +1021,19 @@ elif page == "💼 Mijn Portfolio":
     else: 
         st.write("Leeg")
 
-# ============================================
-# PAGINA 3: SCANNER
-# ============================================
-
 elif page == "📡 Deep Scanner":
-    st.title("📡 Deep Scanner")
+    st.title("📡 Scanner")
     
     pre = st.selectbox("Markt", list(PRESETS.keys()))
     txt = st.text_area("Tickers", PRESETS[pre])
     
     col1, col2 = st.columns(2)
     with col1:
-        scan_speed = st.selectbox("Snelheid:", ["🐢 Veilig (0.8s)", "⚡ Gemiddeld (0.5s)", "🚀 Snel (0.3s)"])
+        scan_speed = st.selectbox("Snelheid:", ["🐢 Veilig (1.0s) ✅", "⚡ Gemiddeld (0.7s)", "🚀 Snel (0.5s)"])
     with col2:
-        st.info("💡 Kies 'Veilig' bij errors")
+        st.info("💡 Gebruik Veilig")
     
-    delay = 0.8 if "Veilig" in scan_speed else 0.5 if "Gemiddeld" in scan_speed else 0.3
+    delay = 1.0 if "Veilig" in scan_speed else 0.7 if "Gemiddeld" in scan_speed else 0.5
     
     if st.button("🔍 Scan"):
         ticker_list = [x.strip().upper() for x in txt.split(',')]
@@ -1125,7 +1047,7 @@ elif page == "📡 Deep Scanner":
         
         for idx, ticker in enumerate(ticker_list):
             progress_bar.progress((idx + 1) / total)
-            status_text.text(f"📊 Scanning {ticker}... ({idx+1}/{total})")
+            status_text.text(f"📊 {ticker}... ({idx+1}/{total})")
             
             try:
                 time.sleep(delay)
@@ -1142,7 +1064,7 @@ elif page == "📡 Deep Scanner":
                     
                     if met['price'] > met['sma200']:
                         score += 20
-                        reasons.append("Trend 📈")
+                        reasons.append("Trend")
                     
                     if met['rsi'] < 30:
                         score += 15
@@ -1179,7 +1101,7 @@ elif page == "📡 Deep Scanner":
                     
             except Exception as e:
                 failed.append(f"{ticker}: {str(e)}")
-                time.sleep(1)
+                time.sleep(2)
         
         progress_bar.empty()
         status_text.empty()
@@ -1215,65 +1137,40 @@ elif page == "📡 Deep Scanner":
                 for error in st.session_state['failed']:
                     st.text(error)
 
-# ============================================
-# PAGINA 4: TRADE JOURNAL
-# ============================================
-
 elif page == "📓 Trade Journal":
     render_trade_journal_page()
 
-# ============================================
-# PAGINA 5: EDUCATIE
-# ============================================
-
 elif page == "🎓 Leer de Basics":
-    st.title("🎓 Zenith Academy")
+    st.title("🎓 Academy")
     
-    with st.expander("🎯 1. Entry Strategieën"):
+    with st.expander("🎯 Entry"):
         st.write("""
-        **Fibonacci 0.618 (Golden Ratio)**
-        - Meest betrouwbare retracement level
-        - Gebruik in combinatie met support
-        
-        **Support/Resistance**
-        - Plekken waar prijs eerder keerde
-        - Hoe vaker getest, hoe sterker
-        
-        **Bollinger Bands**
-        - Lower band = mogelijk oversold
-        - Squeeze = breakout komt
+        **Fibonacci 0.618** - Golden Ratio, meest betrouwbaar
+        **Support/Resistance** - Historische keerpunten
+        **Bollinger Lower** - Oversold indicator
         """)
     
-    with st.expander("🛑 2. Stop Loss"):
+    with st.expander("🛑 Stop Loss"):
         st.write("""
-        **ATR-based (Beste)**
+        **ATR-based**
         - Tight (1.5 ATR): Day traders
         - Normal (2.0 ATR): Swing traders ✅
         - Wide (3.0 ATR): Position traders
-        
-        **Waarom ATR?**
-        - Past zich aan markt aan
-        - Voorkomt uitschudden
         """)
     
-    with st.expander("💰 3. Position Sizing"):
+    with st.expander("💰 Position Size"):
         st.write("""
-        **1% Rule**
-        - Max 1-2% risico per trade
-        - €10,000 account = €100-200 risico
-        
-        **Berekening:**
-        Aandelen = (Account × Risk%) / (Entry - Stop)
-        
-        **Max 20% per positie**
+        **1% Rule**: Max 1-2% risico per trade
+        **Formule**: Aandelen = (Account × Risk%) / (Entry - Stop)
+        **Max 20%** per positie voor diversificatie
         """)
     
-    with st.expander("🎯 4. Take Profit"):
+    with st.expander("🎯 Take Profit"):
         st.write("""
-        **Ladder Strategie:**
+        **Ladder:**
         1. TP1 (1.5R): 1/3 uit, stop naar breakeven
         2. TP2 (2R): 1/3 uit, stop naar TP1
         3. TP3 (3R): Laat lopen met trailing
         """)
     
-    st.success("💡 **Golden Rules:** Risk 1-2% | Min 1:2 RR | ATR stops | Ladder exits | Diversify")
+    st.success("💡 Risk 1-2% | Min 1:2 RR | ATR stops | Diversify")
